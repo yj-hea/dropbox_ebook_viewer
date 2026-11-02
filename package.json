@@ -1,7 +1,7 @@
 {
   "name": "ebook-viewer",
   "version": "0.1.0",
-  "description": "Dropbox 볼트의 ebook/ 폴더에 있는 EPUB·PDF를 읽고 읽기 기록을 남기는 웹 뷰어",
+  "description": "Dropbox 폴더(하위 폴더 포함)의 EPUB·PDF를 읽고 읽기 기록을 남기는 웹 뷰어",
   "type": "module",
   "scripts": {
     "dev": "vite",

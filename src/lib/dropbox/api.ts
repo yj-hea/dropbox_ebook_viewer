@@ -241,7 +241,7 @@ export interface SearchHit {
   path: string;
 }
 
-/** 볼트 안에서 파일 이름이 정확히 일치하는 파일을 찾는다 (이미지 임베드용, 확장자 제한 없음). */
+/** 폴더 안에서 파일 이름이 정확히 일치하는 파일을 찾는다 (이미지 임베드용, 확장자 제한 없음). */
 export async function findFileByName(root: string, name: string): Promise<SearchHit | null> {
   const base = name.split('/').pop() ?? name;
   const data = await rpc<{
@@ -259,7 +259,7 @@ export async function findFileByName(root: string, name: string): Promise<Search
   return null;
 }
 
-/** 볼트 내 파일명 + 본문 검색 (Dropbox 서버 검색). */
+/** 폴더 내 파일명 + 본문 검색 (Dropbox 서버 검색). */
 export async function searchVault(root: string, query: string): Promise<SearchHit[]> {
   const data = await rpc<{
     matches: Array<{ metadata?: { metadata?: { '.tag'?: string; name?: string; path_display?: string } } }>;

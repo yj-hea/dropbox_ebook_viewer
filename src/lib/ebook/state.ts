@@ -9,6 +9,10 @@ export type BookKind = 'epub' | 'pdf';
 export interface Book {
   /** 파일명 (예: `책.epub`) */
   name: string;
+  /** 폴더 기준 상대 경로 (예: `소설/현대/책.epub`). 기록과 표지의 키로 쓴다. */
+  rel: string;
+  /** 책이 들어 있는 폴더의 상대 경로 (최상위면 빈 문자열) */
+  folder: string;
   /** Dropbox 절대 경로 */
   path: string;
   kind: BookKind;
@@ -37,6 +41,7 @@ export interface Highlight {
 }
 
 export interface ReadingState {
+  /** 책의 상대 경로 (키) */
   name: string;
   /** 앱이 이 책을 처음 본 시각 */
   firstSeen: string;

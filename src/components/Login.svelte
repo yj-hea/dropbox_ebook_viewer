@@ -16,8 +16,8 @@
 
 <div class="login">
   <div class="card">
-    <h1><img class="logo" src="https://obsidian.md/images/2023-06-logo.png" alt="Obsidian" /> Obsidian Web</h1>
-    <p class="sub">Dropbox 볼트를 브라우저에서 열람·편집합니다.</p>
+    <h1>전자책 뷰어</h1>
+    <p class="sub">Dropbox 폴더의 EPUB·PDF를 브라우저에서 읽습니다.</p>
 
     {#if !enabled}
       <p class="warn">
@@ -26,7 +26,7 @@
       </p>
     {:else}
       <button class="primary" onclick={connect}>Dropbox 로 로그인</button>
-      <p class="hint">로그인하면 본인 Dropbox 계정의 볼트에만 접근합니다.</p>
+      <p class="hint">로그인하면 본인 Dropbox 계정의 파일에만 접근합니다.</p>
     {/if}
 
     {#if error}
@@ -58,10 +58,6 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-  }
-  .logo {
-    width: 1.6em;
-    height: 1.6em;
   }
   .sub {
     color: var(--text-muted);

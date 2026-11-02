@@ -139,12 +139,6 @@ a {
   text-decoration: none;
   border-bottom: 1px dashed var(--accent);
 }
-.markdown-body img.vault-embed[data-loading] {
-  display: inline-block;
-  min-width: 80px;
-  min-height: 24px;
-  background: var(--bg-elev);
-}
 
 /* 콜아웃 */
 .markdown-body .callout {

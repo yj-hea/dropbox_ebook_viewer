@@ -28,7 +28,7 @@
     if (phase === 'pick' && $vaultRoot) phase = 'ready';
   });
 
-  // 볼트(폴더)를 바꾸고 다시 고른다
+  // 폴더를 바꾸고 다시 고른다
   function changeFolder() {
     vaultRoot.set('');
     phase = 'pick';

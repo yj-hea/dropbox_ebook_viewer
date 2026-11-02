@@ -4,7 +4,7 @@
 import { writable } from 'svelte/store';
 
 export interface OpenNote {
-  /** 볼트 루트 기준 상대 경로 (예: `01_Project/foo.md`) */
+  /** 폴더 기준 상대 경로 (예: `01_Project/foo.md`) */
   relPath: string;
   /** Dropbox 절대 경로 */
   absPath: string;

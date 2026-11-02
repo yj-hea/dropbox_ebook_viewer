@@ -46,8 +46,8 @@
 
 <div class="picker">
   <div class="card">
-    <h2>볼트 폴더 선택</h2>
-    <p class="sub">Obsidian 볼트로 사용할 Dropbox 폴더를 고르세요.</p>
+    <h2>책 폴더 선택</h2>
+    <p class="sub">책이 들어 있는 Dropbox 폴더를 고르세요. 하위 폴더까지 모두 찾습니다.</p>
 
     <div class="crumb">
       <button onclick={up} disabled={!current} title="상위 폴더" aria-label="상위 폴더"><i class="fa-solid fa-arrow-up"></i></button>
@@ -70,11 +70,11 @@
 
     <div class="actions">
       <button class="primary" onclick={select} disabled={!current}>
-        이 폴더를 볼트로 사용
+        이 폴더 선택
       </button>
     </div>
     {#if !current}
-      <p class="muted small">Dropbox 루트 전체를 볼트로 쓰려면 그대로 선택하세요.</p>
+      <p class="muted small">Dropbox 전체에서 찾으려면 그대로 선택하세요.</p>
     {/if}
 
     <button class="signout" onclick={signOut}>다른 계정으로 로그인</button>

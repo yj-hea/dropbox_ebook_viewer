@@ -4,7 +4,7 @@
  * Vite env 변수 `DROPBOX_APP_KEY` 로 주입. 설정 안 된 경우 Dropbox 기능은
  * UI 에서 숨김 처리된다.
  *
- * 이 앱은 일반 Dropbox 폴더(Obsidian 볼트)에 접근하므로 "Full Dropbox" access type
+ * 이 앱은 일반 Dropbox 폴더(전자책이 든 폴더)에 접근하므로 "Full Dropbox" access type
  * 으로 등록된 앱 키가 필요하다. 필요한 scope:
  *   files.metadata.read, files.content.read, files.content.write,
  *   sharing.read, sharing.write
