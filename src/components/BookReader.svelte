@@ -54,8 +54,15 @@
   // PDF 상태
   let pageNo = $state(1);
   let pageCount = $state(0);
-  let pdfText = $state<HTMLDivElement>();
-  let pdfCanvas = $state<HTMLCanvasElement>();
+  let pdfRow = $state<HTMLDivElement>();
+  let readerEl = $state<HTMLDivElement>();
+  let fullscreen = $state(false);
+  // iOS 사파리는 화면 일부를 전체 화면으로 만들 수 없어서 버튼을 숨긴다
+  const canFullscreen = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
+  // 두 쪽 보기 (기기에 기억)
+  let spread = $state(readSpread());
+  // 터치 기기는 탭 영역 넘김을 쓰지 않고 드래그로만 넘긴다
+  const touchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
   let pdfDoc: { numPages: number; getPage: (n: number) => Promise<any>; destroy: () => void } | null = null;
   let renderSeq = 0;
 
@@ -65,7 +72,6 @@
   let epubLabel = '';
   let resizeObserver: ResizeObserver | null = null;
   let pdfResizeObserver: ResizeObserver | null = null;
-  let pdfPage = $state<HTMLDivElement>();
 
   const isEpub = $derived(book.kind === 'epub');
 
@@ -161,6 +167,7 @@
       flow: 'paginated',
       spread: 'none',
     });
+    if (spread) rendition.spread('always');
 
     epubBook.loaded.navigation.then((nav: { toc: { label: string; href: string }[] }) => {
       toc = nav.toc.map((t: { label: string; href: string }) => ({ label: t.label.trim(), href: t.href }));
@@ -191,6 +198,7 @@
       doc.addEventListener('click', (e: MouseEvent) => {
         if (e.target instanceof Element && e.target.closest('a')) return;
         if (doc.getSelection()?.toString()) return;
+        if (touchDevice) return;
         const x = e.clientX / Math.max(doc.defaultView?.innerWidth ?? doc.documentElement.clientWidth, 1);
         if (x < 0.3) prev();
         else if (x > 0.7) next();
@@ -265,42 +273,88 @@
   }
 
   async function renderPdf(n: number, pdfjs?: typeof import('pdfjs-dist')) {
-    if (!pdfDoc || !pdfCanvas || !pdfText || !stage) return;
+    if (!pdfDoc || !pdfRow || !stage) return;
     const seq = ++renderSeq;
     const lib = pdfjs ?? (await import('pdfjs-dist'));
-    const page = await pdfDoc.getPage(n);
+    // 두 쪽 보기면 n과 n+1을 나란히 그린다 (마지막 쪽이면 한 쪽만)
+    const nums = spread && n + 1 <= pageCount ? [n, n + 1] : [n];
+    const pages = await Promise.all(nums.map((i) => pdfDoc!.getPage(i)));
     if (seq !== renderSeq) return;
 
-    const base = page.getViewport({ scale: 1 });
-    // 쪽 전체가 한 화면에 들어가도록 가로와 세로 중 더 빡빡한 쪽에 맞춘다
+    const gap = 16;
     const availW = Math.max(stage.clientWidth - 32, 200);
     const availH = Math.max(stage.clientHeight - 32, 200);
-    const viewport = page.getViewport({ scale: Math.min(availW / base.width, availH / base.height) });
+    const boxW = (availW - gap * (pages.length - 1)) / pages.length;
     const dpr = window.devicePixelRatio || 1;
 
-    pdfCanvas.width = Math.floor(viewport.width * dpr);
-    pdfCanvas.height = Math.floor(viewport.height * dpr);
-    pdfCanvas.style.width = `${viewport.width}px`;
-    pdfCanvas.style.height = `${viewport.height}px`;
-    const ctx = pdfCanvas.getContext('2d');
-    if (!ctx) throw new Error('캔버스를 만들 수 없습니다.');
-    await page.render({ canvasContext: ctx, viewport, transform: [dpr, 0, 0, dpr, 0, 0] }).promise;
-    if (seq !== renderSeq) return;
+    pdfRow.replaceChildren();
+    for (const page of pages) {
+      // 쪽 전체가 칸 안에 들어가도록 가로와 세로 중 더 빡빡한 쪽에 맞춘다
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(boxW / base.width, availH / base.height) });
 
-    // 글자 층: 드래그로 고를 수 있게 캔버스 위에 올린다
-    pdfText.replaceChildren();
-    pdfText.style.width = `${viewport.width}px`;
-    pdfText.style.height = `${viewport.height}px`;
-    const layer = new lib.TextLayer({
-      textContentSource: page.streamTextContent(),
-      container: pdfText,
-      viewport,
-    });
-    await layer.render();
-    if (seq !== renderSeq) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'pdf-page';
+      wrap.style.width = `${viewport.width}px`;
+      wrap.style.height = `${viewport.height}px`;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(viewport.width * dpr);
+      canvas.height = Math.floor(viewport.height * dpr);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
+      const textDiv = document.createElement('div');
+      textDiv.className = 'textLayer';
+      textDiv.style.width = `${viewport.width}px`;
+      textDiv.style.height = `${viewport.height}px`;
+      wrap.append(canvas, textDiv);
+      pdfRow.appendChild(wrap);
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('캔버스를 만들 수 없습니다.');
+      await page.render({ canvasContext: ctx, viewport, transform: [dpr, 0, 0, dpr, 0, 0] }).promise;
+      if (seq !== renderSeq) return;
+
+      // 글자 층: 드래그로 고를 수 있게 캔버스 위에 올린다
+      const layer = new lib.TextLayer({
+        textContentSource: page.streamTextContent(),
+        container: textDiv,
+        viewport,
+      });
+      await layer.render();
+      if (seq !== renderSeq) return;
+    }
 
     pageNo = n;
-    onMove(String(n), `${n}쪽 / ${pageCount}`);
+    const label = nums.length > 1 ? `${nums[0]}–${nums[1]}쪽 / ${pageCount}` : `${n}쪽 / ${pageCount}`;
+    onMove(String(n), label);
+  }
+
+  function readSpread(): boolean {
+    try {
+      return localStorage.getItem('ebook.spread') === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void readerEl?.requestFullscreen?.();
+  }
+
+  function onFullscreenChange() {
+    fullscreen = !!document.fullscreenElement;
+  }
+
+  function toggleSpread() {
+    spread = !spread;
+    try {
+      localStorage.setItem('ebook.spread', spread ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+    if (isEpub) rendition?.spread(spread ? 'always' : 'none');
+    else void renderPdf(pageNo);
   }
 
   function pdfGo(n: number) {
@@ -310,12 +364,12 @@
     void renderPdf(target);
   }
 
-  // 쪽을 클릭하면 왼쪽 3분의 1은 이전, 오른쪽 3분의 1은 다음 쪽 (드래그로 고른 글은 제외)
+  // 쪽을 클릭하면 왼쪽 3분의 1은 이전, 오른쪽 3분의 1은 다음 쪽 (드래그로 고른 글은 제외, 터치 기기는 드래그만 쓴다)
   function onPdfClick(e: MouseEvent) {
-    if (window.getSelection()?.toString()) return;
-    if (!pdfPage) return;
-    const r = pdfPage.getBoundingClientRect();
-    if (e.clientX < r.left || e.clientX > r.right) return;
+    if (touchDevice || window.getSelection()?.toString()) return;
+    const box = (e.target as HTMLElement).closest?.('.pdf-page') as HTMLElement | null;
+    if (!box) return;
+    const r = box.getBoundingClientRect();
     const x = (e.clientX - r.left) / Math.max(r.width, 1);
     if (x < 0.33) prev();
     else if (x > 0.67) next();
@@ -324,18 +378,18 @@
   function onPdfMouseUp() {
     const sel = window.getSelection();
     const text = sel?.toString().trim() ?? '';
-    if (!text || !pdfText || !sel?.anchorNode || !pdfText.contains(sel.anchorNode)) return;
+    if (!text || !pdfRow || !sel?.anchorNode || !pdfRow.contains(sel.anchorNode)) return;
     pending = { text, position: String(pageNo), label: `${pageNo}쪽 / ${pageCount}` };
   }
 
   // ── 공통 조작 ──
   function prev() {
     if (isEpub) void rendition?.prev();
-    else pdfGo(pageNo - 1);
+    else pdfGo(pageNo - (spread ? 2 : 1));
   }
   function next() {
     if (isEpub) void rendition?.next();
-    else pdfGo(pageNo + 1);
+    else pdfGo(pageNo + (spread ? 2 : 1));
   }
 
   function saveHighlight() {
@@ -377,8 +431,9 @@
 </script>
 
 <svelte:window onkeydown={onKey} />
+<svelte:document onfullscreenchange={onFullscreenChange} />
 
-<div class="reader">
+<div class="reader" bind:this={readerEl}>
   <div class="toolbar">
     <button class="btn" onclick={onClose}><i class="fa-solid fa-arrow-left"></i> 책 목록</button>
     <span class="title" title={book.name}>{book.name}</span>
@@ -393,6 +448,14 @@
       <span class="page">{pageNo} / {pageCount}</span>
     {/if}
     <button class="btn" onclick={next} title="다음 (→)" aria-label="다음"><i class="fa-solid fa-chevron-right"></i></button>
+    {#if canFullscreen}
+      <button class="btn" class:on={fullscreen} onclick={toggleFullscreen} title={fullscreen ? '전체 화면 끝내기' : '전체 화면'} aria-label="전체 화면">
+        <i class="fa-solid {fullscreen ? 'fa-compress' : 'fa-expand'}"></i>
+      </button>
+    {/if}
+    <button class="btn" class:on={spread} onclick={toggleSpread} title="두 쪽 보기" aria-label="두 쪽 보기">
+      <i class="fa-solid fa-table-columns"></i>
+    </button>
     <button class="btn" disabled={!pending} onclick={saveHighlight} title="선택한 글 하이라이트">
       <i class="fa-solid fa-highlighter"></i> 하이라이트
     </button>
@@ -431,10 +494,7 @@
         ontouchend={(e) => swipeEnd(e.changedTouches[0])}
         role="presentation"
       >
-        <div class="pdf-page" bind:this={pdfPage}>
-          <canvas bind:this={pdfCanvas}></canvas>
-          <div class="textLayer" bind:this={pdfText}></div>
-        </div>
+        <div class="pdf-row" bind:this={pdfRow}></div>
       </div>
     {/if}
 
@@ -595,13 +655,19 @@
     padding: 1rem;
     background: var(--bg-elev);
   }
-  .pdf-page {
+  .pdf-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    margin: auto;
+  }
+  :global(.pdf-page) {
     position: relative;
     height: fit-content;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
     background: #fff;
   }
-  .pdf-page .textLayer {
+  :global(.pdf-page .textLayer) {
     position: absolute;
     left: 0;
     top: 0;
