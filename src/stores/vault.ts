@@ -6,7 +6,7 @@
  */
 import { writable } from 'svelte/store';
 
-const VAULT_KEY = 'vault.root';
+const VAULT_KEY = 'ebook.root';
 
 function readVaultRoot(): string {
   try {
