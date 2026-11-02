@@ -446,8 +446,8 @@
 <svelte:document onfullscreenchange={onFullscreenChange} />
 
 <div class="reader" bind:this={readerEl}>
-  {#if focus}
-    <button class="float-btn" onclick={() => (peek = !peek)} title="도구 보이기/숨기기" aria-label="도구 보이기/숨기기">
+  {#if focus && !peek}
+    <button class="float-btn" onclick={() => (peek = true)} title="도구 보이기" aria-label="도구 보이기">
       <i class="fa-solid fa-sliders"></i>
     </button>
   {/if}
@@ -466,6 +466,7 @@
       <span class="page">{pageNo} / {pageCount}</span>
     {/if}
     <button class="btn" onclick={next} title="다음 (→)" aria-label="다음"><i class="fa-solid fa-chevron-right"></i></button>
+    <div class="break"></div>
     <button class="btn" class:on={focus} onclick={toggleFocus} title="집중 모드 (Esc로 끝내기)" aria-label="집중 모드">
       <i class="fa-solid fa-eye"></i>
     </button>
@@ -627,10 +628,14 @@
   .toolbar.is-hidden {
     display: none;
   }
+  .break {
+    flex-basis: 100%;
+    height: 0;
+  }
   .float-btn {
     position: absolute;
-    top: 0.4rem;
-    right: 0.4rem;
+    bottom: 0.6rem;
+    right: 0.6rem;
     z-index: 5;
     background: var(--bg-alt);
     border: 1px solid var(--border);
