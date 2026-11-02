@@ -57,6 +57,9 @@
   let pdfRow = $state<HTMLDivElement>();
   let readerEl = $state<HTMLDivElement>();
   let fullscreen = $state(false);
+  // 집중 모드: 툴바를 숨기고 책 영역만 남긴다. 버튼을 누르면 툴바가 잠깐 위에 뜬다.
+  let focus = $state(false);
+  let peek = $state(false);
   // iOS 사파리는 화면 일부를 전체 화면으로 만들 수 없어서 버튼을 숨긴다
   const canFullscreen = typeof document !== 'undefined' && !!document.documentElement.requestFullscreen;
   // 두 쪽 보기 (기기에 기억)
@@ -422,8 +425,17 @@
     newPageNote = '';
   }
 
+  function toggleFocus() {
+    focus = !focus;
+    peek = false;
+  }
+
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
+    if (e.key === 'Escape' && focus) {
+      toggleFocus();
+      return;
+    }
     if (t.closest?.('textarea, input')) return;
     if (e.key === 'ArrowRight' || e.key === 'PageDown') next();
     if (e.key === 'ArrowLeft' || e.key === 'PageUp') prev();
@@ -434,7 +446,13 @@
 <svelte:document onfullscreenchange={onFullscreenChange} />
 
 <div class="reader" bind:this={readerEl}>
-  <div class="toolbar">
+  {#if focus}
+    <button class="float-btn" onclick={() => (peek = !peek)} title="도구 보이기/숨기기" aria-label="도구 보이기/숨기기">
+      <i class="fa-solid fa-sliders"></i>
+    </button>
+  {/if}
+
+  <div class="toolbar" class:overlay={focus} class:is-hidden={focus && !peek}>
     <button class="btn" onclick={onClose}><i class="fa-solid fa-arrow-left"></i> 책 목록</button>
     <span class="title" title={book.name}>{book.name}</span>
     <div class="spacer"></div>
@@ -448,6 +466,9 @@
       <span class="page">{pageNo} / {pageCount}</span>
     {/if}
     <button class="btn" onclick={next} title="다음 (→)" aria-label="다음"><i class="fa-solid fa-chevron-right"></i></button>
+    <button class="btn" class:on={focus} onclick={toggleFocus} title="집중 모드 (Esc로 끝내기)" aria-label="집중 모드">
+      <i class="fa-solid fa-eye"></i>
+    </button>
     {#if canFullscreen}
       <button class="btn" class:on={fullscreen} onclick={toggleFullscreen} title={fullscreen ? '전체 화면 끝내기' : '전체 화면'} aria-label="전체 화면">
         <i class="fa-solid {fullscreen ? 'fa-compress' : 'fa-expand'}"></i>
@@ -581,7 +602,12 @@
     min-height: 0;
     background: var(--bg);
   }
+  .reader {
+    position: relative;
+  }
   .toolbar {
+    flex-wrap: wrap;
+    row-gap: 0.2rem;
     display: flex;
     align-items: center;
     gap: 0.4rem;
@@ -589,6 +615,32 @@
     border-bottom: 1px solid var(--border);
     background: var(--bg-alt);
     font-size: 0.88rem;
+  }
+  .toolbar.overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 4;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+  }
+  .toolbar.is-hidden {
+    display: none;
+  }
+  .float-btn {
+    position: absolute;
+    top: 0.4rem;
+    right: 0.4rem;
+    z-index: 5;
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    padding: 0.3rem 0.5rem;
+    opacity: 0.75;
+  }
+  .float-btn:hover {
+    opacity: 1;
   }
   .title {
     font-weight: 600;
