@@ -1,6 +1,6 @@
 <script lang="ts">
   import { downloadBytes } from '../lib/dropbox/api';
-  import type { Book, Highlight, ReadingState } from '../lib/ebook/state';
+  import { bookmarkAt, type Book, type Highlight, type ReadingState } from '../lib/ebook/state';
   import { loadPdfJs } from '../lib/ebook/pdfjs';
   import { loadNote, scheduleNote } from '../stores/bookNotes';
   import 'pdfjs-dist/web/pdf_viewer.css';
@@ -9,13 +9,36 @@
     root: string;
     book: Book;
     reading: ReadingState;
+    /** 처음 열 위치 (없으면 마지막으로 읽던 곳) */
+    startAt?: string;
     onMove: (position: string, label: string) => void;
     onHighlight: (h: Omit<Highlight, 'id' | 'memo' | 'created'>) => void;
     onMemo: (id: string, memo: string) => void;
     onRemoveHighlight: (id: string) => void;
+    onToggleBookmark: () => void;
+    onAddPageNote: (text: string) => void;
+    onUpdatePageNote: (id: string, text: string) => void;
+    onRemovePageNote: (id: string) => void;
     onClose: () => void;
   }
-  let { root, book, reading, onMove, onHighlight, onMemo, onRemoveHighlight, onClose }: Props = $props();
+  let {
+    root,
+    book,
+    reading,
+    startAt = '',
+    onMove,
+    onHighlight,
+    onMemo,
+    onRemoveHighlight,
+    onToggleBookmark,
+    onAddPageNote,
+    onUpdatePageNote,
+    onRemovePageNote,
+    onClose,
+  }: Props = $props();
+
+  let newPageNote = $state('');
+  const bookmarked = $derived(!!bookmarkAt(reading, reading.position));
 
   type Pending = { text: string; position: string; label: string };
   type Toc = { label: string; href: string };
@@ -48,7 +71,7 @@
 
   // 독서 노트: 책을 열 때 읽고, 입력이 멈추면 자동으로 저장한다
   let noteText = $state<string | null>(null);
-  let panelTab = $state<'hl' | 'note'>('hl');
+  let panelTab = $state<'hl' | 'memo' | 'note'>('hl');
 
   $effect(() => {
     const rel = book.rel;
@@ -172,7 +195,7 @@
 
     for (const h of reading.highlights) paintEpub(h.position);
 
-    await rendition.display(reading.position || undefined);
+    await rendition.display(startAt || reading.position || undefined);
 
     resizeObserver = new ResizeObserver(() => rendition?.resize(el.clientWidth, el.clientHeight));
     resizeObserver.observe(el);
@@ -222,7 +245,7 @@
     const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
     pdfDoc = doc as unknown as typeof pdfDoc;
     pageCount = doc.numPages;
-    const start = Math.min(Math.max(Number(reading.position) || 1, 1), pageCount);
+    const start = Math.min(Math.max(Number(startAt || reading.position) || 1, 1), pageCount);
     await renderPdf(start, pdfjs);
 
     // 창 크기가 바뀌면 같은 쪽을 다시 맞춘다
@@ -321,9 +344,21 @@
     onRemoveHighlight(h.id);
   }
 
+  // 위치(EPUB: CFI, PDF: 쪽 번호)로 이동한다
+  function jumpTo(position: string) {
+    if (isEpub) void rendition?.display(position);
+    else pdfGo(Number(position));
+  }
+
   function jump(h: Highlight) {
-    if (isEpub) void rendition?.display(h.position);
-    else pdfGo(Number(h.position));
+    jumpTo(h.position);
+  }
+
+  function addPageNote() {
+    const text = newPageNote.trim();
+    if (!text) return;
+    onAddPageNote(text);
+    newPageNote = '';
   }
 
   function onKey(e: KeyboardEvent) {
@@ -353,6 +388,12 @@
     <button class="btn" onclick={next} title="다음 (→)" aria-label="다음"><i class="fa-solid fa-chevron-right"></i></button>
     <button class="btn" disabled={!pending} onclick={saveHighlight} title="선택한 글 하이라이트">
       <i class="fa-solid fa-highlighter"></i> 하이라이트
+    </button>
+    <button class="btn" class:on={bookmarked} onclick={onToggleBookmark} title={bookmarked ? '이 위치 북마크 해제' : '이 위치 북마크'} aria-label="북마크">
+      <i class="fa-{bookmarked ? 'solid' : 'regular'} fa-bookmark"></i>
+    </button>
+    <button class="btn" class:on={panelOpen && panelTab === 'memo'} onclick={() => { panelTab = 'memo'; panelOpen = true; }} title="이 위치에 메모" aria-label="페이지 메모">
+      <i class="fa-solid fa-pen"></i>
     </button>
     <button class="btn" class:on={panelOpen} onclick={() => (panelOpen = !panelOpen)} title="하이라이트와 독서 노트">
       <i class="fa-solid fa-note-sticky"></i> {reading.highlights.length}
@@ -395,11 +436,38 @@
         <header>
           <div class="tabs2">
             <button class:on={panelTab === 'hl'} onclick={() => (panelTab = 'hl')}>하이라이트 {reading.highlights.length}</button>
+            <button class:on={panelTab === 'memo'} onclick={() => (panelTab = 'memo')}>메모·북마크</button>
             <button class:on={panelTab === 'note'} onclick={() => (panelTab = 'note')}>독서 노트</button>
           </div>
           <button class="btn" onclick={() => (panelOpen = false)} aria-label="닫기"><i class="fa-solid fa-xmark"></i></button>
         </header>
-        {#if panelTab === 'note'}
+        {#if panelTab === 'memo'}
+          <div class="memo-tab">
+            <div class="add-memo">
+              <span class="loc">현재 위치: {reading.label || '-'}</span>
+              <textarea rows="3" bind:value={newPageNote} placeholder="이 위치에 남길 메모"></textarea>
+              <button class="btn primary" onclick={addPageNote} disabled={!newPageNote.trim()}>메모 추가</button>
+            </div>
+            {#each reading.pageNotes ?? [] as n (n.id)}
+              <div class="hl">
+                <button class="quote" onclick={() => jumpTo(n.position)}>{n.label}</button>
+                <textarea rows="2" value={n.text} onchange={(e) => onUpdatePageNote(n.id, (e.currentTarget as HTMLTextAreaElement).value)}></textarea>
+                <div class="hl-actions">
+                  <button class="btn danger" onclick={() => onRemovePageNote(n.id)}>삭제</button>
+                </div>
+              </div>
+            {/each}
+            <h4>북마크</h4>
+            {#if (reading.bookmarks ?? []).length === 0}
+              <p class="empty">북마크가 없습니다. 상단의 북마크 버튼으로 현재 위치를 표시하세요.</p>
+            {/if}
+            {#each reading.bookmarks ?? [] as b (b.id)}
+              <div class="hl">
+                <button class="quote" onclick={() => jumpTo(b.position)}><i class="fa-solid fa-bookmark"></i> {b.label}</button>
+              </div>
+            {/each}
+          </div>
+        {:else if panelTab === 'note'}
           <div class="note">
             <textarea
               class="note-area"
@@ -649,5 +717,39 @@
     display: flex;
     gap: 0.3rem;
     margin-top: 0.3rem;
+  }
+  .memo-tab {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.85rem;
+  }
+  .memo-tab h4 {
+    margin: 0.6rem 0 0.2rem;
+    font-size: 0.9rem;
+  }
+  .add-memo {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .add-memo textarea {
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.3rem;
+    resize: vertical;
+  }
+  .btn.primary {
+    background: var(--accent);
+    color: #fff;
+    align-self: flex-end;
+  }
+  .btn.primary:disabled {
+    opacity: 0.5;
   }
 </style>

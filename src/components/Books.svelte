@@ -9,8 +9,12 @@
     lastActivity,
     movePosition,
     removeHighlight,
+    addPageNote,
+    removePageNote,
     setFavorite,
     SORT_LABELS,
+    toggleBookmark,
+    updatePageNote,
     sortBooks,
     startSession,
     updateMemo,
@@ -29,6 +33,7 @@
     setState,
   } from '../stores/books';
   import BookReader from './BookReader.svelte';
+  import BookNotebook from './BookNotebook.svelte';
   import ShelfDialog from './ShelfDialog.svelte';
   import { flushNotes } from '../stores/bookNotes';
 
@@ -45,6 +50,11 @@
   let loading = $state(false);
   let error = $state('');
   let current = $state<Book | null>(null);
+  // 처음 열 위치 (노트 화면에서 특정 기록으로 갈 때)
+  let startAt = $state('');
+  // 게시글처럼 보는 책 노트 화면
+  let notebook = $state<Book | null>(null);
+  const notebookState = $derived(notebook ? $readingStates[notebook.rel] : undefined);
   let expanded = $state<string | null>(null);
   // 목록(기록 보기) 또는 서재(표지 보기)
   let view = $state<'list' | 'shelf'>(readView());
@@ -256,10 +266,16 @@
     return folder || '최상위 폴더';
   }
 
-  function open(book: Book) {
+  function open(book: Book, at = '') {
     const st = getState(book.rel) ?? emptyState(book.rel, now());
     setState(root, startSession(st, now()));
+    startAt = at;
     current = book;
+  }
+
+  function openAt(book: Book, position: string) {
+    notebook = null;
+    open(book, position);
   }
 
   function close() {
@@ -270,6 +286,7 @@
     flushStates();
     flushNotes();
     current = null;
+    startAt = '';
   }
 
   function onMove(position: string, label: string) {
@@ -290,6 +307,26 @@
     if (st) setState(root, updateMemo(st, id, memo));
   }
 
+  function onToggleBookmark() {
+    const st = current && getState(current.rel);
+    if (st) setState(root, toggleBookmark(st, st.position, st.label, newId(), now()));
+  }
+
+  function onAddPageNote(text: string) {
+    const st = current && getState(current.rel);
+    if (st) setState(root, addPageNote(st, { id: newId(), position: st.position, label: st.label, text, created: now() }));
+  }
+
+  function onUpdatePageNote(id: string, text: string) {
+    const st = current && getState(current.rel);
+    if (st) setState(root, updatePageNote(st, id, text));
+  }
+
+  function onRemovePageNote(id: string) {
+    const st = current && getState(current.rel);
+    if (st) setState(root, removePageNote(st, id));
+  }
+
   function onRemoveHighlight(id: string) {
     const st = current && getState(current.rel);
     if (st) setState(root, removeHighlight(st, id));
@@ -301,11 +338,24 @@
     {root}
     book={current}
     reading={currentState}
+    startAt={startAt}
     {onMove}
     {onHighlight}
     {onMemo}
     onRemoveHighlight={onRemoveHighlight}
+    onToggleBookmark={onToggleBookmark}
+    onAddPageNote={onAddPageNote}
+    onUpdatePageNote={onUpdatePageNote}
+    onRemovePageNote={onRemovePageNote}
     onClose={close}
+  />
+{:else if notebook && notebookState}
+  <BookNotebook
+    {root}
+    book={notebook}
+    reading={notebookState}
+    onBack={() => (notebook = null)}
+    onOpen={(pos) => notebook && openAt(notebook, pos)}
   />
 {:else}
   <div class="shelf">
@@ -400,6 +450,9 @@
                     </button>
                     <button class="btn" class:on={st?.favorite} onclick={() => toggleFav(book)} title="즐겨찾기" aria-label="즐겨찾기">
                       <i class="fa-{st?.favorite ? 'solid' : 'regular'} fa-star"></i>
+                    </button>
+                    <button class="btn" onclick={() => (notebook = book)} title="노트 보기" aria-label="노트 보기">
+                      <i class="fa-solid fa-book-open"></i>
                     </button>
                     <button class="btn" onclick={() => (dialog = { mode: 'move', book })} title="서가로 옮기기" aria-label="서가로 옮기기">
                       <i class="fa-solid fa-arrow-right-arrow-left"></i>

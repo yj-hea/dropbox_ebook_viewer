@@ -40,6 +40,23 @@ export interface Highlight {
   created: string;
 }
 
+/** 북마크: 위치 하나를 표시해 두는 것 (글이나 메모는 없다) */
+export interface Bookmark {
+  id: string;
+  position: string;
+  label: string;
+  created: string;
+}
+
+/** 페이지 메모: 하이라이트 없이 위치 하나에 적는 메모 */
+export interface PageNote {
+  id: string;
+  position: string;
+  label: string;
+  text: string;
+  created: string;
+}
+
 export interface ReadingState {
   /** 책의 상대 경로 (키) */
   name: string;
@@ -51,6 +68,8 @@ export interface ReadingState {
   highlights: Highlight[];
   /** 즐겨찾기 여부. 책의 실제 위치와는 무관하다. */
   favorite?: boolean;
+  bookmarks?: Bookmark[];
+  pageNotes?: PageNote[];
 }
 
 export function bookKind(name: string): BookKind | null {
@@ -60,7 +79,17 @@ export function bookKind(name: string): BookKind | null {
 }
 
 export function emptyState(name: string, now: string): ReadingState {
-  return { name, firstSeen: now, position: '', label: '', sessions: [], highlights: [], favorite: false };
+  return {
+    name,
+    firstSeen: now,
+    position: '',
+    label: '',
+    sessions: [],
+    highlights: [],
+    favorite: false,
+    bookmarks: [],
+    pageNotes: [],
+  };
 }
 
 export function setFavorite(s: ReadingState, on: boolean): ReadingState {
@@ -80,6 +109,8 @@ export function parseState(raw: string | null, name: string, now: string): Readi
       sessions: Array.isArray(data.sessions) ? data.sessions : [],
       highlights: Array.isArray(data.highlights) ? data.highlights : [],
       favorite: data.favorite === true,
+      bookmarks: Array.isArray(data.bookmarks) ? data.bookmarks : [],
+      pageNotes: Array.isArray(data.pageNotes) ? data.pageNotes : [],
     };
   } catch {
     return emptyState(name, now);
@@ -150,4 +181,28 @@ export function sortBooks<T extends { book: Book; st?: ReadingState | undefined 
     return list.sort((a, b) => (b.st?.firstSeen ?? '').localeCompare(a.st?.firstSeen ?? ''));
   }
   return list.sort((a, b) => (lastActivity(b.st) ?? '').localeCompare(lastActivity(a.st) ?? ''));
+}
+
+/** 현재 위치에 북마크가 있으면 그 북마크, 없으면 undefined */
+export function bookmarkAt(s: ReadingState, position: string): Bookmark | undefined {
+  return (s.bookmarks ?? []).find((b) => b.position === position);
+}
+
+export function toggleBookmark(s: ReadingState, position: string, label: string, id: string, now: string): ReadingState {
+  const list = s.bookmarks ?? [];
+  const hit = list.find((b) => b.position === position);
+  if (hit) return { ...s, bookmarks: list.filter((b) => b.id !== hit.id) };
+  return { ...s, bookmarks: [...list, { id, position, label, created: now }] };
+}
+
+export function addPageNote(s: ReadingState, note: PageNote): ReadingState {
+  return { ...s, pageNotes: [...(s.pageNotes ?? []), note] };
+}
+
+export function updatePageNote(s: ReadingState, id: string, text: string): ReadingState {
+  return { ...s, pageNotes: (s.pageNotes ?? []).map((n) => (n.id === id ? { ...n, text } : n)) };
+}
+
+export function removePageNote(s: ReadingState, id: string): ReadingState {
+  return { ...s, pageNotes: (s.pageNotes ?? []).filter((n) => n.id !== id) };
 }
