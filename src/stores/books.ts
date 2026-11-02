@@ -5,7 +5,15 @@
  * `<폴더>/.ebook-reading/<상대 경로>.json` 에 저장하므로 원래 파일들과 섞이지 않는다.
  */
 import { writable, get } from 'svelte/store';
-import { downloadFile, DropboxApiError, listFolder, uploadText } from '../lib/dropbox/api';
+import {
+  createFolder,
+  deleteFile,
+  downloadFile,
+  DropboxApiError,
+  listFolder,
+  moveFile,
+  uploadText,
+} from '../lib/dropbox/api';
 import { bookKind, emptyState, parseState, type Book, type ReadingState } from '../lib/ebook/state';
 import { statusMessage } from './note';
 import { toRelative } from './vault';
@@ -25,34 +33,89 @@ const inFlight = new Set<string>();
 const dirty = new Set<string>();
 const pending = new Map<string, { root: string; timer: ReturnType<typeof setTimeout> }>();
 
+/** 폴더 경로 끝의 `/` 를 떼어 이어 붙이기 쉽게 한다 ('/' 는 빈 문자열). */
+function base(root: string): string {
+  return root.replace(/\/+$/, '');
+}
+
 function statePath(root: string, rel: string): string {
-  return `${root}/${STATE_DIR}/${encodeURIComponent(rel)}.json`;
+  return `${base(root)}/${STATE_DIR}/${encodeURIComponent(rel)}.json`;
 }
 
 /** 이전 버전이 `ebook/` 폴더 안에 남긴 기록 위치 (그 폴더 바로 아래 책만 해당) */
 function legacyStatePath(root: string, rel: string): string | null {
   const m = /^ebook\/([^/]+)$/.exec(rel);
-  return m ? `${root}/ebook/.reading/${m[1]}.json` : null;
+  return m ? `${base(root)}/ebook/.reading/${m[1]}.json` : null;
 }
 
 export function coverPath(root: string, rel: string): string {
-  return `${root}/${STATE_DIR}/${encodeURIComponent(rel)}.cover.jpg`;
+  return `${base(root)}/${STATE_DIR}/${encodeURIComponent(rel)}.cover.jpg`;
 }
 
-/** 선택한 폴더와 하위 폴더의 EPUB·PDF 목록. 숨김 폴더(이름이 `.`로 시작)는 건너뛴다. */
-export async function listBooks(root: string): Promise<Book[]> {
+export interface Library {
+  books: Book[];
+  /** 하위 폴더 경로 목록 (책이 없는 서가도 포함) */
+  folders: string[];
+}
+
+/** 선택한 폴더와 하위 폴더의 EPUB·PDF 목록과 서가(하위 폴더) 목록. 숨김 항목은 건너뛴다. */
+export async function listBooks(root: string): Promise<Library> {
   const entries = await listFolder(root, true);
   const books: Book[] = [];
+  const folders: string[] = [];
   for (const e of entries) {
-    if (e.type !== 'file') continue;
-    const kind = bookKind(e.name);
-    if (!kind) continue;
     const rel = toRelative(root, e.path);
     const parts = rel.split('/');
-    if (parts.some((p) => p.startsWith('.'))) continue;
+    if (!rel || parts.some((p) => p.startsWith('.'))) continue;
+    if (e.type === 'folder') {
+      folders.push(rel);
+      continue;
+    }
+    const kind = bookKind(e.name);
+    if (!kind) continue;
     books.push({ name: e.name, rel, folder: parts.slice(0, -1).join('/'), path: e.path, kind });
   }
-  return books.sort((a, b) => a.rel.localeCompare(b.rel, 'ko'));
+  return {
+    books: books.sort((a, b) => a.rel.localeCompare(b.rel, 'ko')),
+    folders: folders.sort((a, b) => a.localeCompare(b, 'ko')),
+  };
+}
+
+/** 서가(폴더)를 만든다. parent 가 빈 문자열이면 선택한 폴더 바로 아래에 만든다. */
+export async function createShelf(root: string, parent: string, name: string): Promise<string> {
+  const rel = parent ? `${parent}/${name}` : name;
+  await createFolder(`${base(root)}/${rel}`);
+  return rel;
+}
+
+/**
+ * 책을 다른 서가로 옮긴다. 기록과 표지도 새 경로로 함께 옮긴다.
+ * 옮긴 뒤의 책 정보를 돌려준다.
+ */
+export async function moveBook(root: string, book: Book, folder: string): Promise<Book> {
+  const destRel = folder ? `${folder}/${book.name}` : book.name;
+  const destPath = `${base(root)}/${destRel}`;
+  if (destRel === book.rel) return book;
+
+  // 아직 저장 대기 중인 기록은 옮기기 전에 확정하고, 이전 키의 저장은 취소한다
+  const oldPending = pending.get(book.rel);
+  if (oldPending) clearTimeout(oldPending.timer);
+  pending.delete(book.rel);
+
+  await moveFile(book.path, destPath);
+  await moveFile(coverPath(root, book.rel), coverPath(root, destRel)).catch(() => {});
+
+  const st = get(readingStates)[book.rel];
+  if (st) {
+    readingStates.update((all) => {
+      const { [book.rel]: _old, ...rest } = all;
+      return { ...rest, [destRel]: { ...st, name: destRel } };
+    });
+    scheduleSave(root, destRel);
+  }
+  await deleteFile(statePath(root, book.rel)).catch(() => {});
+  saved.delete(book.rel);
+  return { ...book, rel: destRel, folder, path: destPath };
 }
 
 function isWriteLimit(e: unknown): boolean {

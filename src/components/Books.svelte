@@ -15,14 +15,17 @@
   } from '../lib/ebook/state';
   import {
     coverPath,
+    createShelf,
     flushStates,
     getState,
     listBooks,
     loadStates,
+    moveBook,
     readingStates,
     setState,
   } from '../stores/books';
   import BookReader from './BookReader.svelte';
+  import ShelfDialog from './ShelfDialog.svelte';
 
   interface Props {
     root: string;
@@ -30,6 +33,10 @@
   let { root }: Props = $props();
 
   let books = $state<Book[]>([]);
+  // 하위 폴더(서가) 목록. 책이 없는 서가도 여기에 있다.
+  let folders = $state<string[]>([]);
+  // 서가 만들기 또는 책 옮기기 대화상자
+  let dialog = $state<{ mode: 'create' } | { mode: 'move'; book: Book } | null>(null);
   let loading = $state(false);
   let error = $state('');
   let current = $state<Book | null>(null);
@@ -87,6 +94,7 @@
   // 각 서가 안에서는 최근에 읽은 책이 위로 온다.
   const shelves = $derived.by(() => {
     const groups = new Map<string, { folder: string; books: { book: Book; st: ReturnType<typeof stateOf> }[] }>();
+    for (const f of folders) groups.set(f, { folder: f, books: [] });
     for (const book of books) {
       const g = groups.get(book.folder) ?? { folder: book.folder, books: [] };
       g.books.push({ book, st: $readingStates[book.rel] });
@@ -105,6 +113,23 @@
       }));
   });
 
+  async function submitCreate({ name, folder }: { name: string; folder: string }) {
+    const rel = await createShelf(root, folder, name);
+    folders = [...folders, rel].sort((a, b) => a.localeCompare(b, 'ko'));
+  }
+
+  async function submitMove({ folder }: { name: string; folder: string }) {
+    if (dialog?.mode !== 'move') return;
+    const from = dialog.book;
+    const moved = await moveBook(root, from, folder);
+    books = books.map((b) => (b.rel === from.rel ? moved : b));
+    if (covers[from.rel]) {
+      covers[moved.rel] = covers[from.rel];
+      delete covers[from.rel];
+    }
+    if (expanded === from.rel) expanded = moved.rel;
+  }
+
   function stateOf(rel: string) {
     return $readingStates[rel];
   }
@@ -115,7 +140,9 @@
     loading = true;
     error = '';
     try {
-      books = await listBooks(r);
+      const lib = await listBooks(r);
+      books = lib.books;
+      folders = lib.folders;
       await loadStates(r, books);
       void loadCovers(r, books);
     } catch (e) {
@@ -243,6 +270,9 @@
       <button class="btn" class:on={view === 'shelf'} onclick={() => setView('shelf')} title="서재 보기" aria-label="서재 보기">
         <i class="fa-solid fa-table-cells-large"></i>
       </button>
+      <button class="btn" onclick={() => (dialog = { mode: 'create' })} disabled={loading} title="서가 만들기" aria-label="서가 만들기">
+        <i class="fa-solid fa-folder-plus"></i>
+      </button>
       <button class="btn" onclick={() => refresh(root)} disabled={loading} title="새로고침" aria-label="새로고침">
         <i class="fa-solid fa-rotate"></i>
       </button>
@@ -273,6 +303,8 @@
 
           {#if collapsed.includes(shelf.folder)}
             <!-- 접힌 서가 -->
+          {:else if shelf.books.length === 0}
+            <p class="msg">비어 있는 서가입니다. 책을 옮기면 여기에 나타납니다.</p>
           {:else if view === 'shelf'}
             <ul class="shelf-grid">
               {#each shelf.books as { book, st } (book.rel)}
@@ -289,6 +321,9 @@
                   </button>
                   <div class="cap">{title(book.name)}</div>
                   {#if st && lastActivity(st)}<div class="sub">{fmt(lastActivity(st))}</div>{/if}
+                  <button class="btn mv" onclick={() => (dialog = { mode: 'move', book })} title="서가로 옮기기" aria-label="서가로 옮기기">
+                    <i class="fa-solid fa-arrow-right-arrow-left"></i>
+                  </button>
                 </li>
               {/each}
             </ul>
@@ -300,6 +335,9 @@
                     <button class="open" onclick={() => open(book)}>
                       <i class="fa-solid {book.kind === 'pdf' ? 'fa-file-pdf' : 'fa-book'}"></i>
                       <span class="name">{book.name}</span>
+                    </button>
+                    <button class="btn" onclick={() => (dialog = { mode: 'move', book })} title="서가로 옮기기" aria-label="서가로 옮기기">
+                      <i class="fa-solid fa-arrow-right-arrow-left"></i>
                     </button>
                     <button
                       class="btn"
@@ -345,6 +383,19 @@
       {/each}
     {/if}
   </div>
+{/if}
+
+{#if dialog?.mode === 'create'}
+  <ShelfDialog mode="create" shelves={folders} onSubmit={submitCreate} onClose={() => (dialog = null)} />
+{:else if dialog?.mode === 'move'}
+  <ShelfDialog
+    mode="move"
+    shelves={folders}
+    current={dialog.book.folder}
+    bookName={dialog.book.name}
+    onSubmit={submitMove}
+    onClose={() => (dialog = null)}
+  />
 {/if}
 
 <style>
@@ -544,5 +595,10 @@
   .sub {
     color: var(--text-muted);
     font-size: 0.75rem;
+  }
+  .btn.mv {
+    margin-top: 0.2rem;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.8rem;
   }
 </style>
