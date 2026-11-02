@@ -37,8 +37,9 @@ export function vaultPath(root: string, relative: string): string {
 /** Dropbox 절대 경로 → 폴더 루트 기준 상대 경로. */
 export function toRelative(root: string, absolute: string): string {
   const r = root.replace(/\/$/, '');
-  if (absolute === r) return '';
-  if (absolute.startsWith(`${r}/`)) return absolute.slice(r.length + 1);
+  // Dropbox 경로는 대소문자를 구분하지 않으므로 비교도 구분하지 않는다
+  if (absolute.toLowerCase() === r.toLowerCase()) return '';
+  if (absolute.toLowerCase().startsWith(`${r.toLowerCase()}/`)) return absolute.slice(r.length + 1);
   return absolute.replace(/^\//, '');
 }
 
