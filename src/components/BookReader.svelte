@@ -1,0 +1,526 @@
+<script lang="ts">
+  import { downloadBytes } from '../lib/dropbox/api';
+  import type { Book, Highlight, ReadingState } from '../lib/ebook/state';
+  import { loadPdfJs } from '../lib/ebook/pdfjs';
+  import 'pdfjs-dist/web/pdf_viewer.css';
+
+  interface Props {
+    book: Book;
+    reading: ReadingState;
+    onMove: (position: string, label: string) => void;
+    onHighlight: (h: Omit<Highlight, 'id' | 'memo' | 'created'>) => void;
+    onMemo: (id: string, memo: string) => void;
+    onRemoveHighlight: (id: string) => void;
+    onClose: () => void;
+  }
+  let { book, reading, onMove, onHighlight, onMemo, onRemoveHighlight, onClose }: Props = $props();
+
+  type Pending = { text: string; position: string; label: string };
+  type Toc = { label: string; href: string };
+
+  let stage = $state<HTMLDivElement>();
+  let status = $state('불러오는 중…');
+  let failed = $state(false);
+  let pending = $state<Pending | null>(null);
+  let panelOpen = $state(false);
+  let tocOpen = $state(false);
+  let toc = $state<Toc[]>([]);
+
+  // PDF 상태
+  let pageNo = $state(1);
+  let pageCount = $state(0);
+  let pdfText = $state<HTMLDivElement>();
+  let pdfCanvas = $state<HTMLCanvasElement>();
+  let pdfDoc: { numPages: number; getPage: (n: number) => Promise<any>; destroy: () => void } | null = null;
+  let renderSeq = 0;
+
+  // EPUB 상태
+  let rendition: any = null;
+  let epubBook: any = null;
+  let epubLabel = '';
+  let resizeObserver: ResizeObserver | null = null;
+
+  const isEpub = $derived(book.kind === 'epub');
+
+  // 책이 바뀌면 해당 형식의 뷰어를 새로 만든다
+  $effect(() => {
+    const el = stage;
+    const path = book.path;
+    if (!el) return;
+    let alive = true;
+    void (async () => {
+      status = '불러오는 중…';
+      failed = false;
+      try {
+        const bytes = await downloadBytes(path);
+        if (!alive) return;
+        if (!bytes) throw new Error('파일을 찾을 수 없습니다.');
+        if (book.kind === 'epub') await openEpub(el, bytes);
+        else await openPdf(bytes);
+        if (alive) status = '';
+      } catch (e) {
+        if (!alive) return;
+        failed = true;
+        status = '열지 못했습니다: ' + (e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      alive = false;
+      closeViewer();
+    };
+  });
+
+  function closeViewer() {
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    rendition?.destroy?.();
+    rendition = null;
+    epubBook?.destroy?.();
+    epubBook = null;
+    void pdfDoc?.destroy();
+    pdfDoc = null;
+    renderSeq++;
+    pending = null;
+    toc = [];
+  }
+
+  // ── EPUB ──
+  async function openEpub(el: HTMLDivElement, bytes: ArrayBuffer) {
+    const { default: ePub } = await import('epubjs');
+    epubBook = ePub(bytes);
+    rendition = epubBook.renderTo(el, {
+      width: el.clientWidth,
+      height: el.clientHeight,
+      flow: 'paginated',
+      spread: 'none',
+    });
+
+    epubBook.loaded.navigation.then((nav: { toc: { label: string; href: string }[] }) => {
+      toc = nav.toc.map((t: { label: string; href: string }) => ({ label: t.label.trim(), href: t.href }));
+    });
+
+    rendition.on('relocated', (loc: any) => {
+      const href = String(loc.start.href ?? '').split('#')[0];
+      const chapter = toc.find((t: Toc) => t.href.split('#')[0] === href)?.label ?? '';
+      const page = loc.start.displayed?.page ?? 0;
+      const total = loc.start.displayed?.total ?? 0;
+      epubLabel = [chapter, total > 0 ? `${page}/${total}` : ''].filter(Boolean).join(' · ');
+      onMove(loc.start.cfi, epubLabel);
+    });
+
+    rendition.on('selected', async (cfiRange: string) => {
+      const range = await epubBook.getRange(cfiRange);
+      const text = String(range?.toString() ?? '').trim();
+      if (text) pending = { text, position: cfiRange, label: epubLabel };
+    });
+
+    // 본문은 iframe 안에 그려져서 바깥의 휠·클릭·키 이벤트가 닿지 않는다. 안쪽 문서에 직접 붙인다.
+    rendition.hooks.content.register((contents: { document: Document }) => {
+      const doc = contents.document;
+      doc.addEventListener('wheel', (e: WheelEvent) => {
+        e.preventDefault();
+        turnByWheel(e.deltaY);
+      }, { passive: false });
+      doc.addEventListener('click', (e: MouseEvent) => {
+        if (e.target instanceof Element && e.target.closest('a')) return;
+        if (doc.getSelection()?.toString()) return;
+        const x = e.clientX / Math.max(doc.documentElement.clientWidth, 1);
+        if (x < 0.3) prev();
+        else if (x > 0.7) next();
+      });
+      doc.addEventListener('keydown', (e: KeyboardEvent) => onKey(e));
+      doc.addEventListener('touchstart', (e: TouchEvent) => swipeStart(e.touches[0]), { passive: true });
+      doc.addEventListener('touchend', (e: TouchEvent) => swipeEnd(e.changedTouches[0]), { passive: true });
+    });
+
+    for (const h of reading.highlights) paintEpub(h.position);
+
+    await rendition.display(reading.position || undefined);
+
+    resizeObserver = new ResizeObserver(() => rendition?.resize(el.clientWidth, el.clientHeight));
+    resizeObserver.observe(el);
+  }
+
+  function paintEpub(cfi: string) {
+    rendition?.annotations.highlight(cfi, {}, () => {}, 'hl', { fill: 'rgba(255, 213, 79, 0.5)' });
+  }
+
+  // 터치 좌우 스와이프로 쪽 넘기기. 세로로 스크롤하는 동작과는 구분한다.
+  let swipeFrom: { x: number; y: number } | null = null;
+  function swipeStart(t: Touch | undefined) {
+    swipeFrom = t ? { x: t.clientX, y: t.clientY } : null;
+  }
+  function swipeEnd(t: Touch | undefined) {
+    if (!swipeFrom || !t) return;
+    const dx = t.clientX - swipeFrom.x;
+    const dy = t.clientY - swipeFrom.y;
+    swipeFrom = null;
+    if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx < 0) next();
+    else prev();
+  }
+
+  // 휠 한 번으로 여러 쪽이 넘어가지 않도록 잠시 쉰다
+  let wheelLock = 0;
+  let wheelSum = 0;
+  function turnByWheel(deltaY: number) {
+    const now = Date.now();
+    if (now < wheelLock) return;
+    wheelSum += deltaY;
+    if (Math.abs(wheelSum) < 40) return;
+    if (wheelSum > 0) next();
+    else prev();
+    wheelSum = 0;
+    wheelLock = now + 350;
+  }
+
+  function epubGo(href: string) {
+    void rendition?.display(href);
+    tocOpen = false;
+  }
+
+  // ── PDF ──
+  async function openPdf(bytes: ArrayBuffer) {
+    const pdfjs = await loadPdfJs();
+    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+    pdfDoc = doc as unknown as typeof pdfDoc;
+    pageCount = doc.numPages;
+    const start = Math.min(Math.max(Number(reading.position) || 1, 1), pageCount);
+    await renderPdf(start, pdfjs);
+  }
+
+  async function renderPdf(n: number, pdfjs?: typeof import('pdfjs-dist')) {
+    if (!pdfDoc || !pdfCanvas || !pdfText || !stage) return;
+    const seq = ++renderSeq;
+    const lib = pdfjs ?? (await import('pdfjs-dist'));
+    const page = await pdfDoc.getPage(n);
+    if (seq !== renderSeq) return;
+
+    const base = page.getViewport({ scale: 1 });
+    const width = Math.max(stage.clientWidth - 32, 200);
+    const viewport = page.getViewport({ scale: width / base.width });
+    const dpr = window.devicePixelRatio || 1;
+
+    pdfCanvas.width = Math.floor(viewport.width * dpr);
+    pdfCanvas.height = Math.floor(viewport.height * dpr);
+    pdfCanvas.style.width = `${viewport.width}px`;
+    pdfCanvas.style.height = `${viewport.height}px`;
+    const ctx = pdfCanvas.getContext('2d');
+    if (!ctx) throw new Error('캔버스를 만들 수 없습니다.');
+    await page.render({ canvasContext: ctx, viewport, transform: [dpr, 0, 0, dpr, 0, 0] }).promise;
+    if (seq !== renderSeq) return;
+
+    // 글자 층: 드래그로 고를 수 있게 캔버스 위에 올린다
+    pdfText.replaceChildren();
+    pdfText.style.width = `${viewport.width}px`;
+    pdfText.style.height = `${viewport.height}px`;
+    const layer = new lib.TextLayer({
+      textContentSource: page.streamTextContent(),
+      container: pdfText,
+      viewport,
+    });
+    await layer.render();
+    if (seq !== renderSeq) return;
+
+    pageNo = n;
+    onMove(String(n), `${n}쪽 / ${pageCount}`);
+  }
+
+  function pdfGo(n: number) {
+    if (!pdfDoc) return;
+    const target = Math.min(Math.max(n, 1), pageCount);
+    pageNo = target;
+    void renderPdf(target);
+  }
+
+  function onPdfMouseUp() {
+    const sel = window.getSelection();
+    const text = sel?.toString().trim() ?? '';
+    if (!text || !pdfText || !sel?.anchorNode || !pdfText.contains(sel.anchorNode)) return;
+    pending = { text, position: String(pageNo), label: `${pageNo}쪽 / ${pageCount}` };
+  }
+
+  // ── 공통 조작 ──
+  function prev() {
+    if (isEpub) void rendition?.prev();
+    else pdfGo(pageNo - 1);
+  }
+  function next() {
+    if (isEpub) void rendition?.next();
+    else pdfGo(pageNo + 1);
+  }
+
+  function saveHighlight() {
+    if (!pending) return;
+    onHighlight({ text: pending.text, position: pending.position, label: pending.label });
+    if (isEpub) paintEpub(pending.position);
+    pending = null;
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function removeHighlight(h: Highlight) {
+    if (isEpub) rendition?.annotations.remove(h.position, 'highlight');
+    onRemoveHighlight(h.id);
+  }
+
+  function jump(h: Highlight) {
+    if (isEpub) void rendition?.display(h.position);
+    else pdfGo(Number(h.position));
+  }
+
+  function onKey(e: KeyboardEvent) {
+    const t = e.target as HTMLElement;
+    if (t.closest?.('textarea, input')) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') next();
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') prev();
+  }
+</script>
+
+<svelte:window onkeydown={onKey} />
+
+<div class="reader">
+  <div class="toolbar">
+    <button class="btn" onclick={onClose}><i class="fa-solid fa-arrow-left"></i> 책 목록</button>
+    <span class="title" title={book.name}>{book.name}</span>
+    <div class="spacer"></div>
+    {#if isEpub && toc.length}
+      <button class="btn" class:on={tocOpen} onclick={() => (tocOpen = !tocOpen)} title="목차">
+        <i class="fa-solid fa-list-ul"></i>
+      </button>
+    {/if}
+    <button class="btn" onclick={prev} title="이전 (←)" aria-label="이전"><i class="fa-solid fa-chevron-left"></i></button>
+    {#if !isEpub}
+      <span class="page">{pageNo} / {pageCount}</span>
+    {/if}
+    <button class="btn" onclick={next} title="다음 (→)" aria-label="다음"><i class="fa-solid fa-chevron-right"></i></button>
+    <button class="btn" disabled={!pending} onclick={saveHighlight} title="선택한 글 하이라이트">
+      <i class="fa-solid fa-highlighter"></i> 하이라이트
+    </button>
+    <button class="btn" class:on={panelOpen} onclick={() => (panelOpen = !panelOpen)} title="하이라이트 목록">
+      <i class="fa-solid fa-note-sticky"></i> {reading.highlights.length}
+    </button>
+  </div>
+
+  <div class="body">
+    {#if status}
+      <p class="status" class:err={failed}>{status}</p>
+    {/if}
+
+    {#if isEpub}
+      <div class="epub-stage" bind:this={stage}></div>
+      {#if tocOpen}
+        <ul class="toc">
+          {#each toc as t (t.href + t.label)}
+            <li><button onclick={() => epubGo(t.href)}>{t.label}</button></li>
+          {/each}
+        </ul>
+      {/if}
+    {:else}
+      <div
+        class="pdf-stage"
+        bind:this={stage}
+        onmouseup={onPdfMouseUp}
+        ontouchstart={(e) => swipeStart(e.touches[0])}
+        ontouchend={(e) => swipeEnd(e.changedTouches[0])}
+        role="presentation"
+      >
+        <div class="pdf-page">
+          <canvas bind:this={pdfCanvas}></canvas>
+          <div class="textLayer" bind:this={pdfText}></div>
+        </div>
+      </div>
+    {/if}
+
+    {#if panelOpen}
+      <aside class="panel">
+        <header>하이라이트 <button class="btn" onclick={() => (panelOpen = false)} aria-label="닫기"><i class="fa-solid fa-xmark"></i></button></header>
+        {#if reading.highlights.length === 0}
+          <p class="empty">아직 하이라이트가 없습니다. 글을 드래그해서 고른 뒤 "하이라이트"를 누르세요.</p>
+        {/if}
+        {#each reading.highlights as h (h.id)}
+          <div class="hl">
+            <button class="quote" onclick={() => jump(h)}>“{h.text}”</button>
+            <span class="loc">{h.label}</span>
+            <textarea
+              rows="2"
+              placeholder="메모"
+              value={h.memo}
+              onchange={(e) => onMemo(h.id, (e.currentTarget as HTMLTextAreaElement).value)}
+            ></textarea>
+            <button class="btn danger" onclick={() => removeHighlight(h)}>삭제</button>
+          </div>
+        {/each}
+      </aside>
+    {/if}
+  </div>
+</div>
+
+<style>
+  .reader {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: var(--bg);
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-alt);
+    font-size: 0.88rem;
+  }
+  .title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40%;
+  }
+  .spacer {
+    flex: 1;
+  }
+  .page {
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .btn {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text);
+    padding: 0.3rem 0.5rem;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--bg-elev);
+  }
+  .btn.on {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+  }
+  .btn.danger {
+    color: #c0392b;
+  }
+  .body {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .status {
+    position: absolute;
+    top: 0.8rem;
+    left: 1rem;
+    color: var(--text-muted);
+    z-index: 2;
+  }
+  .status.err {
+    color: #c0392b;
+  }
+  .epub-stage {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+  }
+  .pdf-stage {
+    flex: 1;
+    min-width: 0;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    padding: 1rem;
+    background: var(--bg-elev);
+  }
+  .pdf-page {
+    position: relative;
+    height: fit-content;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+    background: #fff;
+  }
+  .pdf-page .textLayer {
+    position: absolute;
+    left: 0;
+    top: 0;
+  }
+  .toc {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(300px, 80%);
+    overflow-y: auto;
+    margin: 0;
+    padding: 0.5rem;
+    list-style: none;
+    background: var(--bg-alt);
+    border-right: 1px solid var(--border);
+    z-index: 3;
+  }
+  .toc button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    padding: 0.4rem 0.5rem;
+    border-radius: 6px;
+  }
+  .toc button:hover {
+    background: var(--accent-soft);
+  }
+  .panel {
+    width: min(300px, 85vw);
+    border-left: 1px solid var(--border);
+    background: var(--bg-alt);
+    overflow-y: auto;
+    padding: 0.5rem;
+  }
+  .panel header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+  }
+  .hl {
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 0;
+    font-size: 0.85rem;
+  }
+  .quote {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-style: italic;
+    padding: 0;
+  }
+  .loc {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+  .hl textarea {
+    width: 100%;
+    margin-top: 0.3rem;
+    font: inherit;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.3rem;
+    resize: vertical;
+  }
+  .empty {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+</style>
