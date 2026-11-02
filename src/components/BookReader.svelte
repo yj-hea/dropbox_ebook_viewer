@@ -71,15 +71,22 @@
 
   // 독서 노트: 책을 열 때 읽고, 입력이 멈추면 자동으로 저장한다
   let noteText = $state<string | null>(null);
+  let noteError = $state('');
   let panelTab = $state<'hl' | 'memo' | 'note'>('hl');
 
   $effect(() => {
     const rel = book.rel;
     noteText = null;
+    noteError = '';
     let alive = true;
-    void loadNote(root, rel).then((t) => {
-      if (alive) noteText = t;
-    });
+    void loadNote(root, rel)
+      .then((t) => {
+        if (alive) noteText = t;
+      })
+      .catch(() => {
+        // 읽기에 실패하면 입력을 막아 기존 노트가 빈 내용으로 덮이지 않게 한다
+        if (alive) noteError = '독서 노트를 불러오지 못했습니다. 책을 다시 열어 주세요.';
+      });
     return () => {
       alive = false;
     };
@@ -476,7 +483,9 @@
               placeholder="이 책을 읽으며 남길 생각을 적으세요. 마크다운을 쓸 수 있습니다."
               oninput={(e) => onNoteInput((e.currentTarget as HTMLTextAreaElement).value)}
             ></textarea>
-            <p class="hint">{noteText === null ? '불러오는 중…' : '입력이 멈추면 자동으로 저장됩니다.'}</p>
+            <p class="hint">
+              {noteError || (noteText === null ? '불러오는 중…' : '입력이 멈추면 자동으로 저장됩니다. 내용을 모두 지우는 변경은 저장되지 않습니다.')}
+            </p>
           </div>
         {:else}
           {#if reading.highlights.length === 0}

@@ -34,10 +34,14 @@
     const rel = book.rel;
     noteHtml = null;
     let alive = true;
-    void loadNote(root, rel).then((text) => {
-      if (!alive) return;
-      noteHtml = text.trim() ? (marked.parse(text, { async: false }) as string) : '';
-    });
+    void loadNote(root, rel)
+      .then((text) => {
+        if (!alive) return;
+        noteHtml = text.trim() ? (marked.parse(text, { async: false }) as string) : '';
+      })
+      .catch(() => {
+        if (alive) noteHtml = '!error';
+      });
     return () => {
       alive = false;
     };
@@ -89,6 +93,8 @@
       <h2>독서 노트</h2>
       {#if noteHtml === null}
         <p class="empty">불러오는 중…</p>
+      {:else if noteHtml === '!error'}
+        <p class="empty">독서 노트를 불러오지 못했습니다. 잠시 뒤 다시 열어 주세요.</p>
       {:else if noteHtml === ''}
         <p class="empty">아직 독서 노트가 없습니다. 책을 읽으면서 독서 노트 탭에 적어 보세요.</p>
       {:else}

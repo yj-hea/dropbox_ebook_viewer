@@ -18,10 +18,26 @@ export function notePath(root: string, rel: string): string {
   return `${base(root)}/${STATE_DIR}/${encodeURIComponent(rel)}.note.md`;
 }
 
-/** 노트 내용을 읽는다. 아직 없으면 빈 문자열. */
+/** 읽기에 성공한 노트의 내용. 이 값이 있어야 저장을 허용한다 (읽기 실패 때 빈 내용으로 덮어쓰지 않도록). */
+const confirmed = new Map<string, string>();
+
+/**
+ * 노트 내용을 읽는다. 파일이 없으면 빈 문자열, 읽기가 실패하면 예외를 던진다.
+ * 실패를 빈 내용으로 바꾸면 기존 노트가 다음 저장에서 지워지므로 일부러 구분한다.
+ */
 export async function loadNote(root: string, rel: string): Promise<string> {
-  const dl = await downloadFile(notePath(root, rel)).catch(() => null);
-  return dl ? dl.content : '';
+  const dl = await downloadFile(notePath(root, rel));
+  const text = dl ? dl.content : '';
+  confirmed.set(rel, text);
+  return text;
+}
+
+/** 읽기가 확인되지 않은 노트는 저장하지 않는다. 확인된 내용이 있던 노트를 빈 내용으로 지우는 것도 막는다. */
+function allowed(rel: string, text: string): boolean {
+  const known = confirmed.get(rel);
+  if (known === undefined) return false;
+  if (text.trim() === '' && known.trim() !== '') return false;
+  return true;
 }
 
 interface Pending {
@@ -37,8 +53,13 @@ async function send(rel: string) {
   if (!p || busy.has(rel)) return;
   busy.add(rel);
   const sent = p.text;
+  if (!allowed(rel, sent)) {
+    busy.delete(rel);
+    return;
+  }
   try {
     await uploadText(notePath(p.root, rel), sent, 'overwrite');
+    confirmed.set(rel, sent);
   } catch (e) {
     statusMessage.set('독서 노트 저장 실패: ' + (e instanceof Error ? e.message : String(e)));
   } finally {
@@ -58,6 +79,7 @@ function schedule(rel: string) {
 
 /** 노트 내용을 바꾸고 저장을 예약한다. */
 export function scheduleNote(root: string, rel: string, text: string): void {
+  if (!allowed(rel, text)) return;
   const p = pending.get(rel);
   pending.set(rel, { root, text, timer: p?.timer });
   schedule(rel);
