@@ -17,6 +17,7 @@ import {
 import { bookKind, emptyState, parseState, type Book, type ReadingState } from '../lib/ebook/state';
 import { statusMessage } from './note';
 import { toRelative } from './vault';
+import { notePath } from './bookNotes';
 
 export const STATE_DIR = '.ebook-reading';
 
@@ -104,6 +105,7 @@ export async function moveBook(root: string, book: Book, folder: string): Promis
 
   await moveFile(book.path, destPath);
   await moveFile(coverPath(root, book.rel), coverPath(root, destRel)).catch(() => {});
+  await moveFile(notePath(root, book.rel), notePath(root, destRel)).catch(() => {});
 
   const st = get(readingStates)[book.rel];
   if (st) {

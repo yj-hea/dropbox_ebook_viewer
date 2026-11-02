@@ -2,9 +2,11 @@
   import { downloadBytes } from '../lib/dropbox/api';
   import type { Book, Highlight, ReadingState } from '../lib/ebook/state';
   import { loadPdfJs } from '../lib/ebook/pdfjs';
+  import { loadNote, scheduleNote } from '../stores/bookNotes';
   import 'pdfjs-dist/web/pdf_viewer.css';
 
   interface Props {
+    root: string;
     book: Book;
     reading: ReadingState;
     onMove: (position: string, label: string) => void;
@@ -13,7 +15,7 @@
     onRemoveHighlight: (id: string) => void;
     onClose: () => void;
   }
-  let { book, reading, onMove, onHighlight, onMemo, onRemoveHighlight, onClose }: Props = $props();
+  let { root, book, reading, onMove, onHighlight, onMemo, onRemoveHighlight, onClose }: Props = $props();
 
   type Pending = { text: string; position: string; label: string };
   type Toc = { label: string; href: string };
@@ -41,6 +43,37 @@
   let resizeObserver: ResizeObserver | null = null;
 
   const isEpub = $derived(book.kind === 'epub');
+
+  // 독서 노트: 책을 열 때 읽고, 입력이 멈추면 자동으로 저장한다
+  let noteText = $state<string | null>(null);
+  let panelTab = $state<'hl' | 'note'>('hl');
+
+  $effect(() => {
+    const rel = book.rel;
+    noteText = null;
+    let alive = true;
+    void loadNote(root, rel).then((t) => {
+      if (alive) noteText = t;
+    });
+    return () => {
+      alive = false;
+    };
+  });
+
+  function onNoteInput(text: string) {
+    noteText = text;
+    scheduleNote(root, book.rel, text);
+  }
+
+  // 하이라이트와 메모를 노트 끝에 인용으로 덧붙인다
+  function appendToNote(h: Highlight) {
+    const quote = `> ${h.text}`;
+    const extra = h.memo ? `\n\n${h.memo}` : '';
+    const add = `${quote}${extra}\n`;
+    onNoteInput(noteText ? `${noteText.trimEnd()}\n\n${add}` : add);
+    panelTab = 'note';
+    panelOpen = true;
+  }
 
   // 책이 바뀌면 해당 형식의 뷰어를 새로 만든다
   $effect(() => {
@@ -296,7 +329,7 @@
     <button class="btn" disabled={!pending} onclick={saveHighlight} title="선택한 글 하이라이트">
       <i class="fa-solid fa-highlighter"></i> 하이라이트
     </button>
-    <button class="btn" class:on={panelOpen} onclick={() => (panelOpen = !panelOpen)} title="하이라이트 목록">
+    <button class="btn" class:on={panelOpen} onclick={() => (panelOpen = !panelOpen)} title="하이라이트와 독서 노트">
       <i class="fa-solid fa-note-sticky"></i> {reading.highlights.length}
     </button>
   </div>
@@ -333,23 +366,45 @@
 
     {#if panelOpen}
       <aside class="panel">
-        <header>하이라이트 <button class="btn" onclick={() => (panelOpen = false)} aria-label="닫기"><i class="fa-solid fa-xmark"></i></button></header>
-        {#if reading.highlights.length === 0}
-          <p class="empty">아직 하이라이트가 없습니다. 글을 드래그해서 고른 뒤 "하이라이트"를 누르세요.</p>
-        {/if}
-        {#each reading.highlights as h (h.id)}
-          <div class="hl">
-            <button class="quote" onclick={() => jump(h)}>“{h.text}”</button>
-            <span class="loc">{h.label}</span>
-            <textarea
-              rows="2"
-              placeholder="메모"
-              value={h.memo}
-              onchange={(e) => onMemo(h.id, (e.currentTarget as HTMLTextAreaElement).value)}
-            ></textarea>
-            <button class="btn danger" onclick={() => removeHighlight(h)}>삭제</button>
+        <header>
+          <div class="tabs2">
+            <button class:on={panelTab === 'hl'} onclick={() => (panelTab = 'hl')}>하이라이트 {reading.highlights.length}</button>
+            <button class:on={panelTab === 'note'} onclick={() => (panelTab = 'note')}>독서 노트</button>
           </div>
-        {/each}
+          <button class="btn" onclick={() => (panelOpen = false)} aria-label="닫기"><i class="fa-solid fa-xmark"></i></button>
+        </header>
+        {#if panelTab === 'note'}
+          <div class="note">
+            <textarea
+              class="note-area"
+              value={noteText ?? ''}
+              disabled={noteText === null}
+              placeholder="이 책을 읽으며 남길 생각을 적으세요. 마크다운을 쓸 수 있습니다."
+              oninput={(e) => onNoteInput((e.currentTarget as HTMLTextAreaElement).value)}
+            ></textarea>
+            <p class="hint">{noteText === null ? '불러오는 중…' : '입력이 멈추면 자동으로 저장됩니다.'}</p>
+          </div>
+        {:else}
+          {#if reading.highlights.length === 0}
+            <p class="empty">아직 하이라이트가 없습니다. 글을 드래그해서 고른 뒤 "하이라이트"를 누르세요.</p>
+          {/if}
+          {#each reading.highlights as h (h.id)}
+            <div class="hl">
+              <button class="quote" onclick={() => jump(h)}>“{h.text}”</button>
+              <span class="loc">{h.label}</span>
+              <textarea
+                rows="2"
+                placeholder="메모"
+                value={h.memo}
+                onchange={(e) => onMemo(h.id, (e.currentTarget as HTMLTextAreaElement).value)}
+              ></textarea>
+              <div class="hl-actions">
+                <button class="btn" onclick={() => appendToNote(h)}>노트에 추가</button>
+                <button class="btn danger" onclick={() => removeHighlight(h)}>삭제</button>
+              </div>
+            </div>
+          {/each}
+        {/if}
       </aside>
     {/if}
   </div>
@@ -522,5 +577,51 @@
   .empty {
     color: var(--text-muted);
     font-size: 0.85rem;
+  }
+  .tabs2 {
+    display: flex;
+    gap: 0.2rem;
+    font-size: 0.85rem;
+  }
+  .tabs2 button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.25rem 0.4rem;
+    border-radius: 6px;
+  }
+  .tabs2 button.on {
+    color: var(--accent);
+    background: var(--accent-soft);
+    font-weight: 600;
+  }
+  .note {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    height: calc(100% - 2.5rem);
+  }
+  .note-area {
+    flex: 1;
+    min-height: 200px;
+    font: inherit;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem;
+    resize: vertical;
+  }
+  .hint {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+  .hl-actions {
+    display: flex;
+    gap: 0.3rem;
+    margin-top: 0.3rem;
   }
 </style>

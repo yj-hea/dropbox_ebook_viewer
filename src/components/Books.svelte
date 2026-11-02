@@ -26,6 +26,7 @@
   } from '../stores/books';
   import BookReader from './BookReader.svelte';
   import ShelfDialog from './ShelfDialog.svelte';
+  import { flushNotes } from '../stores/bookNotes';
 
   interface Props {
     root: string;
@@ -221,6 +222,7 @@
       if (st) setState(root, endSession(st, now()));
     }
     flushStates();
+    flushNotes();
     current = null;
   }
 
@@ -250,6 +252,7 @@
 
 {#if current && currentState}
   <BookReader
+    {root}
     book={current}
     reading={currentState}
     {onMove}
