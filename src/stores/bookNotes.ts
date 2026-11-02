@@ -3,6 +3,7 @@
  * 입력이 멈추면 잠시 뒤에 한 번에 보낸다.
  */
 import { downloadFile, uploadText } from '../lib/dropbox/api';
+import { crashPath, isConflict } from '../lib/ebook/conflict';
 import { statusMessage } from './note';
 
 const SAVE_DELAY = 2000;
@@ -20,6 +21,8 @@ export function notePath(root: string, rel: string): string {
 
 /** 읽기에 성공한 노트의 내용. 이 값이 있어야 저장을 허용한다 (읽기 실패 때 빈 내용으로 덮어쓰지 않도록). */
 const confirmed = new Map<string, string>();
+/** 마지막으로 읽거나 쓴 파일 버전. 저장할 때 이 버전과 같을 때만 덮어쓴다. */
+const revs = new Map<string, string>();
 
 /**
  * 노트 내용을 읽는다. 파일이 없으면 빈 문자열, 읽기가 실패하면 예외를 던진다.
@@ -28,6 +31,7 @@ const confirmed = new Map<string, string>();
 export async function loadNote(root: string, rel: string): Promise<string> {
   const dl = await downloadFile(notePath(root, rel));
   const text = dl ? dl.content : '';
+  if (dl) revs.set(rel, dl.rev);
   confirmed.set(rel, text);
   return text;
 }
@@ -48,6 +52,18 @@ interface Pending {
 const pending = new Map<string, Pending>();
 const busy = new Set<string>();
 
+/** 다른 곳이 먼저 저장한 노트를 `_crashed` 복사본으로 남기고, 현재 내용을 최신으로 저장한다. */
+async function keepConflict(root: string, rel: string, text: string): Promise<void> {
+  const current = await downloadFile(notePath(root, rel));
+  if (current) {
+    await uploadText(crashPath(notePath(root, rel), '.note.md'), current.content, 'add');
+  }
+  const res = await uploadText(notePath(root, rel), text, 'overwrite');
+  revs.set(rel, res.rev);
+  confirmed.set(rel, text);
+  statusMessage.set('독서 노트가 다른 곳에서 함께 수정되어, 이전 버전을 _crashed 파일로 보관했습니다.');
+}
+
 async function send(rel: string) {
   const p = pending.get(rel);
   if (!p || busy.has(rel)) return;
@@ -58,10 +74,16 @@ async function send(rel: string) {
     return;
   }
   try {
-    await uploadText(notePath(p.root, rel), sent, 'overwrite');
+    const rev = revs.get(rel);
+    const res = await uploadText(notePath(p.root, rel), sent, rev ? { update: rev } : 'overwrite');
+    revs.set(rel, res.rev);
     confirmed.set(rel, sent);
   } catch (e) {
-    statusMessage.set('독서 노트 저장 실패: ' + (e instanceof Error ? e.message : String(e)));
+    if (isConflict(e) && revs.has(rel)) {
+      await keepConflict(p.root, rel, sent);
+    } else {
+      statusMessage.set('독서 노트 저장 실패: ' + (e instanceof Error ? e.message : String(e)));
+    }
   } finally {
     busy.delete(rel);
   }

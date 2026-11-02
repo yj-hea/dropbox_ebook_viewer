@@ -15,6 +15,7 @@ import {
   uploadText,
 } from '../lib/dropbox/api';
 import { bookKind, emptyState, parseState, type Book, type ReadingState } from '../lib/ebook/state';
+import { crashPath, isConflict } from '../lib/ebook/conflict';
 import { statusMessage } from './note';
 import { toRelative } from './vault';
 import { notePath } from './bookNotes';
@@ -37,16 +38,6 @@ const known = new Set<string>();
 /** 마지막으로 읽거나 쓴 파일 버전. 저장할 때 이 버전과 같을 때만 덮어쓴다. */
 const revs = new Map<string, string>();
 
-/** 충돌 복사본 이름용 시각 (yymmddHHMM) */
-function crashStamp(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(d.getFullYear() % 100)}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}`;
-}
-
-function isConflict(e: unknown): boolean {
-  return e instanceof DropboxApiError && e.status === 409;
-}
-
 /**
  * 다른 기기나 탭이 먼저 저장한 파일을 `_crashed_yymmddHHMM` 복사본으로 남긴다.
  * 그다음 현재 상태를 최신 파일로 저장한다.
@@ -54,7 +45,7 @@ function isConflict(e: unknown): boolean {
 async function keepConflict(root: string, rel: string, json: string): Promise<void> {
   const current = await downloadFile(statePath(root, rel));
   if (current) {
-    const copy = statePath(root, rel).replace(/\.json$/, `_crashed_${crashStamp(new Date())}.json`);
+    const copy = crashPath(statePath(root, rel), '.json');
     await uploadText(copy, current.content, 'add');
   }
   const res = await uploadText(statePath(root, rel), json, 'overwrite');
