@@ -9,9 +9,13 @@
     lastActivity,
     movePosition,
     removeHighlight,
+    setFavorite,
+    SORT_LABELS,
+    sortBooks,
     startSession,
     updateMemo,
     type Book,
+    type SortKey,
   } from '../lib/ebook/state';
   import {
     coverPath,
@@ -56,6 +60,31 @@
     }
   }
 
+  // 정렬 기준 (기기에 기억한다)
+  const SORT_KEYS: SortKey[] = ['recent', 'name', 'added'];
+  let sortKey = $state<SortKey>(readSort());
+
+  function readSort(): SortKey {
+    try {
+      const v = localStorage.getItem('books.sort') as SortKey | null;
+      return v && SORT_KEYS.includes(v) ? v : 'recent';
+    } catch {
+      return 'recent';
+    }
+  }
+
+  function setSort(v: SortKey) {
+    sortKey = v;
+    try {
+      localStorage.setItem('books.sort', v);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // 즐겨찾기 서가의 접기 상태 키 (폴더 경로와 겹치지 않는 값)
+  const FAV_KEY = '\u0000favorites';
+
   // 접어 둔 서가 (폴더 경로 목록). 기기에 기억한다.
   let collapsed = $state<string[]>(readCollapsed());
 
@@ -68,8 +97,8 @@
     }
   }
 
-  function toggleShelf(folder: string) {
-    collapsed = collapsed.includes(folder) ? collapsed.filter((f) => f !== folder) : [...collapsed, folder];
+  function toggleShelf(key: string) {
+    collapsed = collapsed.includes(key) ? collapsed.filter((f) => f !== key) : [...collapsed, key];
     try {
       localStorage.setItem('books.collapsed', JSON.stringify(collapsed));
     } catch {
@@ -101,7 +130,7 @@
       g.books.push({ book, st: $readingStates[book.rel] });
       groups.set(book.folder, g);
     }
-    return [...groups.values()]
+    const result = [...groups.values()]
       .sort((a, b) => {
         if (a.folder === b.folder) return 0;
         if (a.folder === '') return -1;
@@ -109,10 +138,25 @@
         return a.folder.localeCompare(b.folder, 'ko');
       })
       .map((g) => ({
+        key: g.folder,
         folder: g.folder,
-        books: g.books.sort((a, b) => (lastActivity(b.st) ?? '').localeCompare(lastActivity(a.st) ?? '')),
+        fav: false,
+        books: sortBooks(g.books, sortKey),
       }));
+
+    // 즐겨찾기한 책은 위치와 상관없이 맨 위에 모아 보여 준다 (책은 원래 서가에도 그대로 있다)
+    const favs = sortBooks(
+      books.filter((b) => $readingStates[b.rel]?.favorite).map((book) => ({ book, st: $readingStates[book.rel] })),
+      sortKey,
+    );
+    if (favs.length === 0) return result;
+    return [{ key: FAV_KEY, folder: '', fav: true, books: favs }, ...result];
   });
+
+  function toggleFav(book: Book) {
+    const st = getState(book.rel);
+    if (st) setState(root, setFavorite(st, !st.favorite));
+  }
 
   async function submitCreate({ name, folder }: { name: string; folder: string }) {
     const rel = await createShelf(root, folder, name);
@@ -267,6 +311,11 @@
       <h2>책</h2>
       <span class="count">{books.length}권</span>
       <div class="spacer"></div>
+      <select class="sort" value={sortKey} onchange={(e) => setSort((e.currentTarget as HTMLSelectElement).value as SortKey)} aria-label="정렬">
+        {#each SORT_KEYS as k (k)}
+          <option value={k}>{SORT_LABELS[k]}</option>
+        {/each}
+      </select>
       <button class="btn" class:on={view === 'list'} onclick={() => setView('list')} title="목록 보기" aria-label="목록 보기">
         <i class="fa-solid fa-list"></i>
       </button>
@@ -290,21 +339,25 @@
     {:else if books.length === 0}
       <p class="msg">이 폴더와 하위 폴더에서 EPUB 또는 PDF 파일을 찾지 못했습니다.</p>
     {:else}
-      {#each shelves as shelf (shelf.folder)}
+      {#each shelves as shelf (shelf.key)}
         <section class="shelf-group">
           <h3 class="shelf-title">
             <button
               class="shelf-toggle"
-              onclick={() => toggleShelf(shelf.folder)}
-              aria-expanded={!collapsed.includes(shelf.folder)}
+              onclick={() => toggleShelf(shelf.key)}
+              aria-expanded={!collapsed.includes(shelf.key)}
             >
-              <i class="fa-solid fa-chevron-{collapsed.includes(shelf.folder) ? 'right' : 'down'} chev"></i>
-              <i class="fa-solid fa-folder"></i> {shelfName(shelf.folder)}
+              <i class="fa-solid fa-chevron-{collapsed.includes(shelf.key) ? 'right' : 'down'} chev"></i>
+              {#if shelf.fav}
+                <i class="fa-solid fa-star fav-ico"></i> 즐겨찾기
+              {:else}
+                <i class="fa-solid fa-folder"></i> {shelfName(shelf.folder)}
+              {/if}
               <span class="count">{shelf.books.length}권</span>
             </button>
           </h3>
 
-          {#if collapsed.includes(shelf.folder)}
+          {#if collapsed.includes(shelf.key)}
             <!-- 접힌 서가 -->
           {:else if shelf.books.length === 0}
             <p class="msg">비어 있는 서가입니다. 책을 옮기면 여기에 나타납니다.</p>
@@ -323,10 +376,16 @@
                     {/if}
                   </button>
                   <div class="cap">{title(book.name)}</div>
+                  {#if shelf.fav}<div class="sub">{book.folder || '최상위 폴더'}</div>{/if}
                   {#if st && lastActivity(st)}<div class="sub">{fmt(lastActivity(st))}</div>{/if}
-                  <button class="btn mv" onclick={() => (dialog = { mode: 'move', book })} title="서가로 옮기기" aria-label="서가로 옮기기">
-                    <i class="fa-solid fa-arrow-right-arrow-left"></i>
-                  </button>
+                  <div class="card-actions">
+                    <button class="btn mv" class:on={st?.favorite} onclick={() => toggleFav(book)} title="즐겨찾기" aria-label="즐겨찾기">
+                      <i class="fa-{st?.favorite ? 'solid' : 'regular'} fa-star"></i>
+                    </button>
+                    <button class="btn mv" onclick={() => (dialog = { mode: 'move', book })} title="서가로 옮기기" aria-label="서가로 옮기기">
+                      <i class="fa-solid fa-arrow-right-arrow-left"></i>
+                    </button>
+                  </div>
                 </li>
               {/each}
             </ul>
@@ -338,6 +397,9 @@
                     <button class="open" onclick={() => open(book)}>
                       <i class="fa-solid {book.kind === 'pdf' ? 'fa-file-pdf' : 'fa-book'}"></i>
                       <span class="name">{book.name}</span>
+                    </button>
+                    <button class="btn" class:on={st?.favorite} onclick={() => toggleFav(book)} title="즐겨찾기" aria-label="즐겨찾기">
+                      <i class="fa-{st?.favorite ? 'solid' : 'regular'} fa-star"></i>
                     </button>
                     <button class="btn" onclick={() => (dialog = { mode: 'move', book })} title="서가로 옮기기" aria-label="서가로 옮기기">
                       <i class="fa-solid fa-arrow-right-arrow-left"></i>
@@ -353,6 +415,7 @@
                     </button>
                   </div>
                   <div class="meta">
+                    {#if shelf.fav}{book.folder || '최상위 폴더'} · {/if}
                     추가 {fmt(st?.firstSeen)} · 마지막 {fmt(lastActivity(st))}
                     {#if st?.label}· {st.label}{/if}
                     {#if st && st.highlights.length}· 하이라이트 {st.highlights.length}{/if}
@@ -600,8 +663,27 @@
     font-size: 0.75rem;
   }
   .btn.mv {
-    margin-top: 0.2rem;
     padding: 0.2rem 0.4rem;
     font-size: 0.8rem;
+  }
+  .card-actions {
+    display: flex;
+    gap: 0.2rem;
+    margin-top: 0.2rem;
+  }
+  .btn.on {
+    color: #d4a017;
+  }
+  .fav-ico {
+    color: #d4a017;
+  }
+  .sort {
+    font: inherit;
+    font-size: 0.85rem;
+    color: var(--text);
+    background: var(--bg-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.25rem 0.4rem;
   }
 </style>

@@ -49,6 +49,8 @@ export interface ReadingState {
   label: string;
   sessions: Session[];
   highlights: Highlight[];
+  /** 즐겨찾기 여부. 책의 실제 위치와는 무관하다. */
+  favorite?: boolean;
 }
 
 export function bookKind(name: string): BookKind | null {
@@ -58,7 +60,11 @@ export function bookKind(name: string): BookKind | null {
 }
 
 export function emptyState(name: string, now: string): ReadingState {
-  return { name, firstSeen: now, position: '', label: '', sessions: [], highlights: [] };
+  return { name, firstSeen: now, position: '', label: '', sessions: [], highlights: [], favorite: false };
+}
+
+export function setFavorite(s: ReadingState, on: boolean): ReadingState {
+  return { ...s, favorite: on };
 }
 
 /** 저장된 JSON을 읽는다. 형식이 깨졌으면 빈 기록으로 시작한다. */
@@ -73,6 +79,7 @@ export function parseState(raw: string | null, name: string, now: string): Readi
       label: typeof data.label === 'string' ? data.label : '',
       sessions: Array.isArray(data.sessions) ? data.sessions : [],
       highlights: Array.isArray(data.highlights) ? data.highlights : [],
+      favorite: data.favorite === true,
     };
   } catch {
     return emptyState(name, now);
@@ -122,7 +129,25 @@ export function removeHighlight(s: ReadingState, id: string): ReadingState {
 }
 
 /** 마지막으로 열었거나 닫은 시각 (기록이 없으면 null). 정렬에 쓴다. */
-export function lastActivity(s: ReadingState): string | null {
-  const last = s.sessions[s.sessions.length - 1];
+export function lastActivity(s: ReadingState | undefined): string | null {
+  const last = s?.sessions[(s?.sessions.length ?? 0) - 1];
   return last ? (last.closed ?? last.opened) : null;
+}
+
+export type SortKey = 'recent' | 'name' | 'added';
+
+export const SORT_LABELS: Record<SortKey, string> = {
+  recent: '최근 읽은 순',
+  name: '이름순',
+  added: '추가된 순',
+};
+
+/** 정렬 기준에 따라 책 목록을 정렬한 새 배열을 돌려준다. */
+export function sortBooks<T extends { book: Book; st?: ReadingState | undefined }>(items: T[], key: SortKey): T[] {
+  const list = [...items];
+  if (key === 'name') return list.sort((a, b) => a.book.name.localeCompare(b.book.name, 'ko'));
+  if (key === 'added') {
+    return list.sort((a, b) => (b.st?.firstSeen ?? '').localeCompare(a.st?.firstSeen ?? ''));
+  }
+  return list.sort((a, b) => (lastActivity(b.st) ?? '').localeCompare(lastActivity(a.st) ?? ''));
 }
