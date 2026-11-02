@@ -32,6 +32,8 @@ const saved = new Map<string, string>();
 /** 지금 저장 중인 책 (끝난 뒤 다시 저장해야 하면 dirty) */
 const inFlight = new Set<string>();
 const dirty = new Set<string>();
+/** 읽기가 확인된 책 (기록 파일이 있었거나 새로 만든 책). 여기에 없으면 저장하지 않는다. */
+const known = new Set<string>();
 const pending = new Map<string, { root: string; timer: ReturnType<typeof setTimeout> }>();
 
 /** 폴더 경로 끝의 `/` 를 떼어 이어 붙이기 쉽게 한다 ('/' 는 빈 문자열). */
@@ -117,6 +119,8 @@ export async function moveBook(root: string, book: Book, folder: string): Promis
   }
   await deleteFile(statePath(root, book.rel)).catch(() => {});
   saved.delete(book.rel);
+  if (known.has(book.rel)) known.add(destRel);
+  known.delete(book.rel);
   return { ...book, rel: destRel, folder, path: destPath };
 }
 
@@ -126,7 +130,8 @@ function isWriteLimit(e: unknown): boolean {
 
 async function save(root: string, rel: string, tries = 0): Promise<void> {
   const state = get(readingStates)[rel];
-  if (!state) return;
+  // 기록을 제대로 읽지 못한 책은 빈 기록으로 덮어쓰지 않는다
+  if (!state || !known.has(rel)) return;
   const json = JSON.stringify(state, null, 2);
   if (saved.get(rel) === json) return;
   // 한 파일에는 한 번에 하나만 쓴다. 쓰는 중에 바뀌었으면 끝난 뒤 한 번 더 쓴다.
@@ -171,30 +176,43 @@ export function getState(rel: string): ReadingState | undefined {
   return get(readingStates)[rel];
 }
 
+/** 기록 파일 내용. 파일이 없으면 null, 읽기가 실패하면 예외를 던진다. */
 async function readStateFile(root: string, rel: string): Promise<string | null> {
-  const dl = await downloadFile(statePath(root, rel)).catch(() => null);
+  const dl = await downloadFile(statePath(root, rel));
   if (dl) return dl.content;
   const legacy = legacyStatePath(root, rel);
   if (!legacy) return null;
-  const old = await downloadFile(legacy).catch(() => null);
+  const old = await downloadFile(legacy);
   return old ? old.content : null;
 }
 
 /** 목록의 책마다 기록을 읽는다. 기록 파일이 없으면 지금을 처음 본 날짜로 만들어 바로 저장한다. */
 export async function loadStates(root: string, books: Book[]): Promise<void> {
   const now = new Date().toISOString();
-  const loaded = await Promise.all(
+  const results = await Promise.all(
     books.map(async (b) => {
-      const raw = await readStateFile(root, b.rel);
-      const state = raw !== null ? parseState(raw, b.rel, now) : emptyState(b.rel, now);
-      return { rel: b.rel, state, isNew: raw === null };
+      try {
+        const raw = await readStateFile(root, b.rel);
+        const state = raw !== null ? parseState(raw, b.rel, now) : emptyState(b.rel, now);
+        return { rel: b.rel, state, isNew: raw === null };
+      } catch {
+        // 읽기에 실패한 책은 기존 기록을 그대로 두고, 저장도 하지 않는다
+        return null;
+      }
     }),
   );
+  const loaded = results.filter((r): r is NonNullable<typeof r> => r !== null);
+  if (loaded.length < results.length) {
+    statusMessage.set('일부 책의 읽기 기록을 불러오지 못했습니다. 목록을 새로고침해 주세요.');
+  }
   readingStates.update((all) => ({
     ...all,
     ...Object.fromEntries(loaded.map((l) => [l.rel, l.state])),
   }));
-  for (const l of loaded) if (l.isNew) scheduleSave(root, l.rel);
+  for (const l of loaded) {
+    known.add(l.rel);
+    if (l.isNew) scheduleSave(root, l.rel);
+  }
 }
 
 /** 예약된 저장을 모두 바로 보낸다 (창을 닫기 전에). */
