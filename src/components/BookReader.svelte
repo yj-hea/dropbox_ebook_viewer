@@ -169,6 +169,8 @@
       height: el.clientHeight,
       flow: 'paginated',
       spread: 'none',
+      // 두 쪽 보기에서 양쪽 쪽 사이 여백을 없앤다 (기본값은 여백이 생긴다)
+      gap: 0,
     });
     if (spread) rendition.spread('always');
 
@@ -284,10 +286,10 @@
     const pages = await Promise.all(nums.map((i) => pdfDoc!.getPage(i)));
     if (seq !== renderSeq) return;
 
-    const gap = 16;
+    // 두 쪽 보기에서 양쪽 쪽이 맞닿도록 간격을 두지 않는다
     const availW = Math.max(stage.clientWidth - 32, 200);
     const availH = Math.max(stage.clientHeight - 32, 200);
-    const boxW = (availW - gap * (pages.length - 1)) / pages.length;
+    const boxW = availW / pages.length;
     const dpr = window.devicePixelRatio || 1;
 
     pdfRow.replaceChildren();
@@ -714,7 +716,7 @@
   }
   .pdf-row {
     display: flex;
-    gap: 16px;
+    gap: 0;
     align-items: flex-start;
     margin: auto;
   }
