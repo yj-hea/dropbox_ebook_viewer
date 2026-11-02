@@ -34,6 +34,34 @@ const inFlight = new Set<string>();
 const dirty = new Set<string>();
 /** 읽기가 확인된 책 (기록 파일이 있었거나 새로 만든 책). 여기에 없으면 저장하지 않는다. */
 const known = new Set<string>();
+/** 마지막으로 읽거나 쓴 파일 버전. 저장할 때 이 버전과 같을 때만 덮어쓴다. */
+const revs = new Map<string, string>();
+
+/** 충돌 복사본 이름용 시각 (yymmddHHMM) */
+function crashStamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getFullYear() % 100)}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+function isConflict(e: unknown): boolean {
+  return e instanceof DropboxApiError && e.status === 409;
+}
+
+/**
+ * 다른 기기나 탭이 먼저 저장한 파일을 `_crashed_yymmddHHMM` 복사본으로 남긴다.
+ * 그다음 현재 상태를 최신 파일로 저장한다.
+ */
+async function keepConflict(root: string, rel: string, json: string): Promise<void> {
+  const current = await downloadFile(statePath(root, rel));
+  if (current) {
+    const copy = statePath(root, rel).replace(/\.json$/, `_crashed_${crashStamp(new Date())}.json`);
+    await uploadText(copy, current.content, 'add');
+  }
+  const res = await uploadText(statePath(root, rel), json, 'overwrite');
+  revs.set(rel, res.rev);
+  saved.set(rel, json);
+  statusMessage.set('다른 곳에서 함께 수정되어, 이전 버전을 _crashed 파일로 보관했습니다.');
+}
 const pending = new Map<string, { root: string; timer: ReturnType<typeof setTimeout> }>();
 
 /** 폴더 경로 끝의 `/` 를 떼어 이어 붙이기 쉽게 한다 ('/' 는 빈 문자열). */
@@ -119,6 +147,7 @@ export async function moveBook(root: string, book: Book, folder: string): Promis
   }
   await deleteFile(statePath(root, book.rel)).catch(() => {});
   saved.delete(book.rel);
+  revs.delete(book.rel);
   if (known.has(book.rel)) known.add(destRel);
   known.delete(book.rel);
   return { ...book, rel: destRel, folder, path: destPath };
@@ -141,10 +170,25 @@ async function save(root: string, rel: string, tries = 0): Promise<void> {
   }
   inFlight.add(rel);
   try {
-    await uploadText(statePath(root, rel), json, 'overwrite');
-    saved.set(rel, json);
+    const rev = revs.get(rel);
+    if (rev) {
+      // 읽은 버전이 그대로일 때만 덮어쓴다. 바뀌었으면 충돌로 처리한다.
+      const res = await uploadText(statePath(root, rel), json, { update: rev });
+      revs.set(rel, res.rev);
+      saved.set(rel, json);
+    } else {
+      const res = await uploadText(statePath(root, rel), json, 'overwrite');
+      revs.set(rel, res.rev);
+      saved.set(rel, json);
+    }
   } catch (e) {
-    if (isWriteLimit(e) && tries < MAX_TRIES) {
+    if (isConflict(e) && revs.has(rel)) {
+      try {
+        await keepConflict(root, rel, json);
+      } catch (err) {
+        statusMessage.set('읽기 기록 저장 실패: ' + (err instanceof Error ? err.message : String(err)));
+      }
+    } else if (isWriteLimit(e) && tries < MAX_TRIES) {
       inFlight.delete(rel);
       await new Promise((r) => setTimeout(r, 1000 * 2 ** tries));
       return save(root, rel, tries + 1);
@@ -179,7 +223,10 @@ export function getState(rel: string): ReadingState | undefined {
 /** 기록 파일 내용. 파일이 없으면 null, 읽기가 실패하면 예외를 던진다. */
 async function readStateFile(root: string, rel: string): Promise<string | null> {
   const dl = await downloadFile(statePath(root, rel));
-  if (dl) return dl.content;
+  if (dl) {
+    revs.set(rel, dl.rev);
+    return dl.content;
+  }
   const legacy = legacyStatePath(root, rel);
   if (!legacy) return null;
   const old = await downloadFile(legacy);
