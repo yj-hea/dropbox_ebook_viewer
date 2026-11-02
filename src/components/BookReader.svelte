@@ -41,6 +41,8 @@
   let epubBook: any = null;
   let epubLabel = '';
   let resizeObserver: ResizeObserver | null = null;
+  let pdfResizeObserver: ResizeObserver | null = null;
+  let pdfPage = $state<HTMLDivElement>();
 
   const isEpub = $derived(book.kind === 'epub');
 
@@ -106,6 +108,8 @@
   function closeViewer() {
     resizeObserver?.disconnect();
     resizeObserver = null;
+    pdfResizeObserver?.disconnect();
+    pdfResizeObserver = null;
     rendition?.destroy?.();
     rendition = null;
     epubBook?.destroy?.();
@@ -157,7 +161,7 @@
       doc.addEventListener('click', (e: MouseEvent) => {
         if (e.target instanceof Element && e.target.closest('a')) return;
         if (doc.getSelection()?.toString()) return;
-        const x = e.clientX / Math.max(doc.documentElement.clientWidth, 1);
+        const x = e.clientX / Math.max(doc.defaultView?.innerWidth ?? doc.documentElement.clientWidth, 1);
         if (x < 0.3) prev();
         else if (x > 0.7) next();
       });
@@ -220,6 +224,14 @@
     pageCount = doc.numPages;
     const start = Math.min(Math.max(Number(reading.position) || 1, 1), pageCount);
     await renderPdf(start, pdfjs);
+
+    // 창 크기가 바뀌면 같은 쪽을 다시 맞춘다
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    pdfResizeObserver = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => void renderPdf(pageNo), 150);
+    });
+    if (stage) pdfResizeObserver.observe(stage);
   }
 
   async function renderPdf(n: number, pdfjs?: typeof import('pdfjs-dist')) {
@@ -230,8 +242,10 @@
     if (seq !== renderSeq) return;
 
     const base = page.getViewport({ scale: 1 });
-    const width = Math.max(stage.clientWidth - 32, 200);
-    const viewport = page.getViewport({ scale: width / base.width });
+    // 쪽 전체가 한 화면에 들어가도록 가로와 세로 중 더 빡빡한 쪽에 맞춘다
+    const availW = Math.max(stage.clientWidth - 32, 200);
+    const availH = Math.max(stage.clientHeight - 32, 200);
+    const viewport = page.getViewport({ scale: Math.min(availW / base.width, availH / base.height) });
     const dpr = window.devicePixelRatio || 1;
 
     pdfCanvas.width = Math.floor(viewport.width * dpr);
@@ -264,6 +278,17 @@
     const target = Math.min(Math.max(n, 1), pageCount);
     pageNo = target;
     void renderPdf(target);
+  }
+
+  // 쪽을 클릭하면 왼쪽 3분의 1은 이전, 오른쪽 3분의 1은 다음 쪽 (드래그로 고른 글은 제외)
+  function onPdfClick(e: MouseEvent) {
+    if (window.getSelection()?.toString()) return;
+    if (!pdfPage) return;
+    const r = pdfPage.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right) return;
+    const x = (e.clientX - r.left) / Math.max(r.width, 1);
+    if (x < 0.33) prev();
+    else if (x > 0.67) next();
   }
 
   function onPdfMouseUp() {
@@ -353,11 +378,12 @@
         class="pdf-stage"
         bind:this={stage}
         onmouseup={onPdfMouseUp}
+        onclick={onPdfClick}
         ontouchstart={(e) => swipeStart(e.touches[0])}
         ontouchend={(e) => swipeEnd(e.changedTouches[0])}
         role="presentation"
       >
-        <div class="pdf-page">
+        <div class="pdf-page" bind:this={pdfPage}>
           <canvas bind:this={pdfCanvas}></canvas>
           <div class="textLayer" bind:this={pdfText}></div>
         </div>
