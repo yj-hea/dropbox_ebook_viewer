@@ -1,7 +1,7 @@
 /**
  * Dropbox 앱 설정.
  *
- * Vite env 변수 `VITE_DROPBOX_APP_KEY` 로 주입. 설정 안 된 경우 Dropbox 기능은
+ * Vite env 변수 `DROPBOX_APP_KEY` 로 주입. 설정 안 된 경우 Dropbox 기능은
  * UI 에서 숨김 처리된다.
  *
  * 이 앱은 일반 Dropbox 폴더(Obsidian 볼트)에 접근하므로 "Full Dropbox" access type
@@ -10,7 +10,7 @@
  *   sharing.read, sharing.write
  */
 
-const APP_KEY = (import.meta.env.VITE_DROPBOX_APP_KEY ?? '').trim();
+const APP_KEY = (import.meta.env.DROPBOX_APP_KEY ?? '').trim();
 
 export const DROPBOX_APP_KEY = APP_KEY;
 

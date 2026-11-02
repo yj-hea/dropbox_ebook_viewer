@@ -21,7 +21,7 @@
 
     {#if !enabled}
       <p class="warn">
-        Dropbox App key 가 설정되지 않았습니다. <code>VITE_DROPBOX_APP_KEY</code>
+        Dropbox App key 가 설정되지 않았습니다. <code>DROPBOX_APP_KEY</code>
         환경변수를 설정하세요.
       </p>
     {:else}

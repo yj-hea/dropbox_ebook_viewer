@@ -9,7 +9,7 @@ Dropbox 볼트의 `ebook/` 폴더에 있는 EPUB·PDF 파일을 브라우저에�
 ## 실행
 
 ```sh
-cp .env.example .env   # VITE_DROPBOX_APP_KEY 채우기
+cp .env.example .env   # DROPBOX_APP_KEY 채우기
 npm install
 npm run dev
 ```
