@@ -48,6 +48,27 @@
     }
   }
 
+  // 접어 둔 서가 (폴더 경로 목록). 기기에 기억한다.
+  let collapsed = $state<string[]>(readCollapsed());
+
+  function readCollapsed(): string[] {
+    try {
+      const v = JSON.parse(localStorage.getItem('books.collapsed') ?? '[]');
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function toggleShelf(folder: string) {
+    collapsed = collapsed.includes(folder) ? collapsed.filter((f) => f !== folder) : [...collapsed, folder];
+    try {
+      localStorage.setItem('books.collapsed', JSON.stringify(collapsed));
+    } catch {
+      /* ignore */
+    }
+  }
+
   function setView(v: 'list' | 'shelf') {
     view = v;
     try {
@@ -239,11 +260,20 @@
       {#each shelves as shelf (shelf.folder)}
         <section class="shelf-group">
           <h3 class="shelf-title">
-            <i class="fa-solid fa-folder"></i> {shelfName(shelf.folder)}
-            <span class="count">{shelf.books.length}권</span>
+            <button
+              class="shelf-toggle"
+              onclick={() => toggleShelf(shelf.folder)}
+              aria-expanded={!collapsed.includes(shelf.folder)}
+            >
+              <i class="fa-solid fa-chevron-{collapsed.includes(shelf.folder) ? 'right' : 'down'} chev"></i>
+              <i class="fa-solid fa-folder"></i> {shelfName(shelf.folder)}
+              <span class="count">{shelf.books.length}권</span>
+            </button>
           </h3>
 
-          {#if view === 'shelf'}
+          {#if collapsed.includes(shelf.folder)}
+            <!-- 접힌 서가 -->
+          {:else if view === 'shelf'}
             <ul class="shelf-grid">
               {#each shelf.books as { book, st } (book.rel)}
                 <li>
@@ -369,16 +399,35 @@
     margin-bottom: 1.6rem;
   }
   .shelf-title {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
     margin: 0 0 0.6rem;
     padding-bottom: 0.3rem;
     font-size: 0.95rem;
     border-bottom: 2px solid var(--border);
   }
-  .shelf-title i {
+  .shelf-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    font-weight: 700;
+    text-align: left;
+    padding: 0.1rem 0;
+    cursor: pointer;
+  }
+  .shelf-toggle:hover {
+    color: var(--accent);
+  }
+  .shelf-toggle .fa-folder {
     color: var(--text-muted);
+  }
+  .chev {
+    width: 0.9rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
   }
   .list {
     list-style: none;
