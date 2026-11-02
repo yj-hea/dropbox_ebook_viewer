@@ -266,11 +266,29 @@
     return folder || '최상위 폴더';
   }
 
+  // 뒤로 가기가 페이지를 벗어나지 않도록, 책과 노트 화면마다 기록(history) 항목을 하나씩 쓴다
+  function viewState(): string | undefined {
+    return (history.state as { ebookView?: string } | null)?.ebookView;
+  }
+
   function open(book: Book, at = '') {
     const st = getState(book.rel) ?? emptyState(book.rel, now());
     setState(root, startSession(st, now()));
+    // 노트 화면에서 넘어왔다면 그 항목을 책 항목으로 바꿔서 뒤로 가기가 한 번에 목록으로 돌아가게 한다
+    if (viewState() === 'notebook') history.replaceState({ ebookView: 'reader' }, '');
+    else if (viewState() !== 'reader') history.pushState({ ebookView: 'reader' }, '');
     startAt = at;
     current = book;
+  }
+
+  function openNotebook(book: Book) {
+    if (viewState() !== 'notebook') history.pushState({ ebookView: 'notebook' }, '');
+    notebook = book;
+  }
+
+  function leaveNotebook() {
+    notebook = null;
+    if (viewState() === 'notebook') history.back();
   }
 
   function openAt(book: Book, position: string) {
@@ -278,7 +296,8 @@
     open(book, position);
   }
 
-  function close() {
+  // 책 기록을 정리하고 목록으로 돌아간다 (뒤로 가기로 들어온 경우에는 기록을 다시 줄이지 않는다)
+  function finishReading() {
     if (current) {
       const st = getState(current.rel);
       if (st) setState(root, endSession(st, now()));
@@ -288,6 +307,22 @@
     current = null;
     startAt = '';
   }
+
+  function close() {
+    finishReading();
+    if (viewState() === 'reader') history.back();
+  }
+
+  // 브라우저의 뒤로 가기: 책이나 노트 화면을 닫고 목록으로 간다
+  function onPopState() {
+    if (current) finishReading();
+    else if (notebook) notebook = null;
+  }
+
+  $effect(() => {
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  });
 
   function onMove(position: string, label: string) {
     if (!current) return;
@@ -354,7 +389,7 @@
     {root}
     book={notebook}
     reading={notebookState}
-    onBack={() => (notebook = null)}
+    onBack={leaveNotebook}
     onOpen={(pos) => notebook && openAt(notebook, pos)}
   />
 {:else}
@@ -451,7 +486,7 @@
                     <button class="btn" class:on={st?.favorite} onclick={() => toggleFav(book)} title="즐겨찾기" aria-label="즐겨찾기">
                       <i class="fa-{st?.favorite ? 'solid' : 'regular'} fa-star"></i>
                     </button>
-                    <button class="btn" onclick={() => (notebook = book)} title="노트 보기" aria-label="노트 보기">
+                    <button class="btn" onclick={() => openNotebook(book)} title="노트 보기" aria-label="노트 보기">
                       <i class="fa-solid fa-book-open"></i>
                     </button>
                     <button class="btn" onclick={() => (dialog = { mode: 'move', book })} title="서가로 옮기기" aria-label="서가로 옮기기">
