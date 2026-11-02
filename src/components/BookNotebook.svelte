@@ -13,11 +13,13 @@
     reading: ReadingState;
     onBack: () => void;
     onOpen: (position: string) => void;
+    onDelete: (kind: 'hl' | 'memo' | 'bm', id: string) => void;
   }
-  let { root, book, reading, onBack, onOpen }: Props = $props();
+  let { root, book, reading, onBack, onOpen, onDelete }: Props = $props();
 
   type Entry = {
     key: string;
+    id: string;
     kind: 'hl' | 'memo' | 'bm';
     created: string;
     label: string;
@@ -51,13 +53,13 @@
   const entries = $derived.by<Entry[]>(() => {
     const list: Entry[] = [];
     for (const h of reading.highlights) {
-      list.push({ key: 'h' + h.id, kind: 'hl', created: h.created, label: h.label, position: h.position, title: h.text, body: h.memo });
+      list.push({ key: 'h' + h.id, id: h.id, kind: 'hl', created: h.created, label: h.label, position: h.position, title: h.text, body: h.memo });
     }
     for (const n of reading.pageNotes ?? []) {
-      list.push({ key: 'm' + n.id, kind: 'memo', created: n.created, label: n.label, position: n.position, title: '', body: n.text });
+      list.push({ key: 'm' + n.id, id: n.id, kind: 'memo', created: n.created, label: n.label, position: n.position, title: '', body: n.text });
     }
     for (const b of reading.bookmarks ?? []) {
-      list.push({ key: 'b' + b.id, kind: 'bm', created: b.created, label: b.label, position: b.position, title: '', body: '' });
+      list.push({ key: 'b' + b.id, id: b.id, kind: 'bm', created: b.created, label: b.label, position: b.position, title: '', body: '' });
     }
     return list.sort((a, b) => b.created.localeCompare(a.created));
   });
@@ -116,7 +118,10 @@
           </div>
           {#if e.title}<blockquote>{e.title}</blockquote>{/if}
           {#if e.body}<p class="body">{e.body}</p>{/if}
-          <button class="btn go" onclick={() => onOpen(e.position)}><i class="fa-solid fa-arrow-up-right-from-square"></i> 이 위치로 가기</button>
+          <div class="card-foot">
+            <button class="btn go" onclick={() => onOpen(e.position)}><i class="fa-solid fa-arrow-up-right-from-square"></i> 이 위치로 가기</button>
+            <button class="btn del" onclick={() => onDelete(e.kind, e.id)} title="이 기록 지우기" aria-label="이 기록 지우기"><i class="fa-solid fa-xmark"></i></button>
+          </div>
         </div>
       {/each}
     </section>
@@ -240,6 +245,18 @@
     margin: 0.3rem 0;
     white-space: pre-wrap;
     line-height: 1.6;
+  }
+  .card-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .del {
+    color: var(--text-muted);
+    padding: 0.15rem 0.4rem;
+  }
+  .del:hover {
+    color: #c0392b;
   }
   .go {
     font-size: 0.8rem;

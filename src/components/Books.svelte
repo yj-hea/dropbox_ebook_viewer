@@ -11,6 +11,8 @@
     removeHighlight,
     addPageNote,
     removePageNote,
+    removeBookmark,
+    removeSession,
     setFavorite,
     SORT_LABELS,
     toggleBookmark,
@@ -362,6 +364,18 @@
     if (st) setState(root, removePageNote(st, id));
   }
 
+  // 기록 하나를 지운다. 되돌릴 수 없으므로 한 번 확인한다.
+  function deleteRecord(book: Book, kind: 'session' | 'hl' | 'memo' | 'bm', id: string) {
+    const st = getState(book.rel);
+    if (!st) return;
+    const label = kind === 'session' ? '열고 닫은 기록' : kind === 'bm' ? '북마크' : kind === 'memo' ? '메모' : '하이라이트';
+    if (!confirm(`이 ${label}을(를) 지울까요?`)) return;
+    if (kind === 'session') setState(root, removeSession(st, id));
+    else if (kind === 'hl') setState(root, removeHighlight(st, id));
+    else if (kind === 'memo') setState(root, removePageNote(st, id));
+    else setState(root, removeBookmark(st, id));
+  }
+
   function onRemoveHighlight(id: string) {
     const st = current && getState(current.rel);
     if (st) setState(root, removeHighlight(st, id));
@@ -390,6 +404,7 @@
     book={notebook}
     reading={notebookState}
     onBack={leaveNotebook}
+    onDelete={(kind, id) => deleteRecord(notebook!, kind, id)}
     onOpen={(pos) => notebook && openAt(notebook, pos)}
   />
 {:else}
@@ -518,6 +533,9 @@
                         <div class="sess">
                           {fmt(s.opened)} → {s.closed ? fmt(s.closed) : '읽는 중'}
                           <span class="loc">{s.label || '-'}</span>
+                          <button class="x" onclick={() => deleteRecord(book, 'session', s.opened)} title="이 기록 지우기" aria-label="이 기록 지우기">
+                            <i class="fa-solid fa-xmark"></i>
+                          </button>
                         </div>
                       {/each}
                       {#each st.highlights as h (h.id)}
@@ -525,6 +543,9 @@
                           “{h.text}”
                           {#if h.memo}<span class="memo">— {h.memo}</span>{/if}
                           <span class="loc">({h.label})</span>
+                          <button class="x" onclick={() => deleteRecord(book, 'hl', h.id)} title="이 하이라이트 지우기" aria-label="이 하이라이트 지우기">
+                            <i class="fa-solid fa-xmark"></i>
+                          </button>
                         </div>
                       {/each}
                     </div>
@@ -687,6 +708,17 @@
   }
   .sess.quote {
     font-style: italic;
+  }
+  .x {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    padding: 0 0.3rem;
+    margin-left: 0.3rem;
+    font-size: 0.75rem;
+  }
+  .x:hover {
+    color: #c0392b;
   }
   .loc,
   .memo {

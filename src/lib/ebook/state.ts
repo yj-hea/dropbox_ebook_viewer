@@ -206,3 +206,12 @@ export function updatePageNote(s: ReadingState, id: string, text: string): Readi
 export function removePageNote(s: ReadingState, id: string): ReadingState {
   return { ...s, pageNotes: (s.pageNotes ?? []).filter((n) => n.id !== id) };
 }
+
+/** 열고 닫은 기록 하나를 지운다 (열린 시각으로 찾는다). */
+export function removeSession(s: ReadingState, opened: string): ReadingState {
+  return { ...s, sessions: s.sessions.filter((x) => x.opened !== opened) };
+}
+
+export function removeBookmark(s: ReadingState, id: string): ReadingState {
+  return { ...s, bookmarks: (s.bookmarks ?? []).filter((b) => b.id !== id) };
+}
