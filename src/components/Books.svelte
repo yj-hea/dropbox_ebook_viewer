@@ -130,7 +130,9 @@
       g.books.push({ book, st: $readingStates[book.rel] });
       groups.set(book.folder, g);
     }
+    // 책이 없는 서가는 보이지 않는다 (서가 만들기 대화상자의 상위 서가 목록에는 그대로 남는다)
     const result = [...groups.values()]
+      .filter((g) => g.books.length > 0)
       .sort((a, b) => {
         if (a.folder === b.folder) return 0;
         if (a.folder === '') return -1;
@@ -359,8 +361,6 @@
 
           {#if collapsed.includes(shelf.key)}
             <!-- 접힌 서가 -->
-          {:else if shelf.books.length === 0}
-            <p class="msg">비어 있는 서가입니다. 책을 옮기면 여기에 나타납니다.</p>
           {:else if view === 'shelf'}
             <ul class="shelf-grid">
               {#each shelf.books as { book, st } (book.rel)}
