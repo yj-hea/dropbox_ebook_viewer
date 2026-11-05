@@ -164,9 +164,27 @@
   }
 
   // ── EPUB ──
+  // EPUB 쪽 크기: A4 비율(세로/가로 ≈ 1.414)의 쪽을 틀 안에 가운데 맞춘다.
+  // 두 쪽 보기에서는 쪽 두 개를 나란히 놓은 크기가 된다.
+  const PAGE_RATIO = 1.414;
+  let epubFrame = $state<HTMLDivElement>();
+
+  function sizeEpubStage() {
+    if (!epubFrame || !stage) return;
+    const availW = Math.max(epubFrame.clientWidth - 32, 200);
+    const availH = Math.max(epubFrame.clientHeight - 32, 200);
+    const pageW = Math.min(spread ? availW / 2 : availW, availH / PAGE_RATIO);
+    const w = Math.floor(pageW * (spread ? 2 : 1));
+    const h = Math.floor(pageW * PAGE_RATIO);
+    stage.style.width = `${w}px`;
+    stage.style.height = `${h}px`;
+    rendition?.resize(w, h);
+  }
+
   async function openEpub(el: HTMLDivElement, bytes: ArrayBuffer) {
     const { default: ePub } = await import('epubjs');
     epubBook = ePub(bytes);
+    sizeEpubStage();
     rendition = epubBook.renderTo(el, {
       width: el.clientWidth,
       height: el.clientHeight,
@@ -220,8 +238,8 @@
 
     await rendition.display(startAt || reading.position || undefined);
 
-    resizeObserver = new ResizeObserver(() => rendition?.resize(el.clientWidth, el.clientHeight));
-    resizeObserver.observe(el);
+    resizeObserver = new ResizeObserver(() => sizeEpubStage());
+    resizeObserver.observe(epubFrame ?? el);
   }
 
   function paintEpub(cfi: string) {
@@ -397,7 +415,10 @@
     } catch {
       /* ignore */
     }
-    if (isEpub) rendition?.spread(spread ? 'always' : 'none');
+    if (isEpub) {
+      rendition?.spread(spread ? 'always' : 'none');
+      sizeEpubStage();
+    }
     else void renderPdf(pageNo);
   }
 
@@ -539,7 +560,7 @@
     {/if}
 
     {#if isEpub}
-      <div class="epub-frame">
+      <div class="epub-frame" bind:this={epubFrame}>
         <div class="epub-stage" bind:this={stage}></div>
       </div>
       {#if tocOpen}
@@ -751,12 +772,15 @@
     min-width: 0;
     height: 100%;
     box-sizing: border-box;
-    padding: 1rem clamp(0.75rem, 4vw, 3rem);
+    padding: 16px;
     background: var(--bg-elev);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
   }
   .epub-stage {
-    height: 100%;
-    width: 100%;
+    flex: none;
     background: #fff;
     border-radius: 2px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);

@@ -27,8 +27,8 @@ export const STATE_DIR = '.ebook-reading';
 export const readingStates = writable<Record<string, ReadingState>>({});
 
 // 같은 파일에 짧은 시간 안에 여러 번 쓰면 Dropbox 가 429 로 막으므로 넉넉히 모아서 쓴다
-// 쪽을 넘길 때마다 쓰지 않도록 조금 모아서 쓴다. 창을 숨기거나 닫을 때는 바로 보낸다.
-const SAVE_DELAY = 5000;
+// 기록은 바뀔 때마다 쓰지 않는다. 책을 닫거나 창을 숨길 때 보내고, 그 사이에는 5분마다 자동으로 보낸다.
+const AUTOSAVE_MS = 5 * 60 * 1000;
 const MAX_TRIES = 4;
 /** 마지막으로 저장에 성공한 내용 (같으면 다시 쓰지 않는다) */
 const saved = new Map<string, string>();
@@ -55,7 +55,8 @@ async function keepConflict(root: string, rel: string, json: string): Promise<vo
   saved.set(rel, json);
   statusMessage.set('다른 곳에서 함께 수정되어, 이전 버전을 _crashed 파일로 보관했습니다.');
 }
-const pending = new Map<string, { root: string; timer: ReturnType<typeof setTimeout> }>();
+/** 저장하지 않은 변경이 있는 책 (상대 경로 → 폴더 경로) */
+const pending = new Map<string, string>();
 
 /** 폴더 경로 끝의 `/` 를 떼어 이어 붙이기 쉽게 한다 ('/' 는 빈 문자열). */
 function base(root: string): string {
@@ -125,9 +126,8 @@ export async function moveBook(root: string, book: Book, folder: string): Promis
   const destPath = `${base(root)}/${destRel}`;
   if (destRel === book.rel) return book;
 
-  // 아직 저장 대기 중인 기록은 옮기기 전에 확정하고, 이전 키의 저장은 취소한다
-  const oldPending = pending.get(book.rel);
-  if (oldPending) clearTimeout(oldPending.timer);
+  // 저장하지 않은 기록은 옮기기 전에 먼저 보내고, 이전 이름의 저장은 빼 둔다
+  if (pending.has(book.rel)) await save(root, book.rel);
   pending.delete(book.rel);
 
   await moveFile(book.path, destPath);
@@ -140,7 +140,7 @@ export async function moveBook(root: string, book: Book, folder: string): Promis
       const { [book.rel]: _old, ...rest } = all;
       return { ...rest, [destRel]: { ...st, name: destRel } };
     });
-    scheduleSave(root, destRel);
+    markDirty(root, destRel);
   }
   await deleteFile(statePath(root, book.rel)).catch(() => {});
   saved.delete(book.rel);
@@ -197,20 +197,15 @@ async function save(root: string, rel: string, tries = 0): Promise<void> {
   if (dirty.delete(rel)) void save(root, rel);
 }
 
-function scheduleSave(root: string, rel: string) {
-  const old = pending.get(rel);
-  if (old) clearTimeout(old.timer);
-  const timer = setTimeout(() => {
-    pending.delete(rel);
-    void save(root, rel);
-  }, SAVE_DELAY);
-  pending.set(rel, { root, timer });
+/** 저장하지 않은 변경으로 표시한다. 실제 저장은 책을 닫을 때, 창을 숨길 때, 5분마다 일어난다. */
+function markDirty(root: string, rel: string) {
+  pending.set(rel, root);
 }
 
-/** 기록을 바꾸고 저장을 예약한다. */
+/** 기록을 바꾸고 저장 대기열에 넣는다. */
 export function setState(root: string, next: ReadingState): void {
   readingStates.update((all) => ({ ...all, [next.name]: next }));
-  scheduleSave(root, next.name);
+  markDirty(root, next.name);
 }
 
 export function getState(rel: string): ReadingState | undefined {
@@ -274,19 +269,19 @@ export async function loadStates(root: string, books: Book[]): Promise<void> {
     statusMessage.set('일부 책의 읽기 기록을 불러오지 못했습니다. 목록을 새로고침해 주세요.');
   }
   for (const rel of newlyKnown) known.add(rel);
-  for (const rel of created) scheduleSave(root, rel);
+  for (const rel of created) markDirty(root, rel);
 }
 
-/** 예약된 저장을 모두 바로 보낸다 (창을 닫기 전에). */
+/** 저장하지 않은 기록을 모두 보낸다 (책을 닫을 때, 창을 숨길 때). */
 export function flushStates(): void {
-  for (const [rel, p] of pending) {
-    clearTimeout(p.timer);
-    void save(p.root, rel);
+  for (const [rel, root] of pending) {
+    pending.delete(rel);
+    void save(root, rel);
   }
-  pending.clear();
 }
 
 if (typeof window !== 'undefined') {
+  setInterval(flushStates, AUTOSAVE_MS);
   window.addEventListener('pagehide', flushStates);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flushStates();
