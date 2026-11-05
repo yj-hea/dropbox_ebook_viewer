@@ -129,7 +129,10 @@
         const bytes = await downloadBytes(path);
         if (!alive) return;
         if (!bytes) throw new Error('파일을 찾을 수 없습니다.');
-        if (book.kind === 'epub') await openEpub(el, bytes);
+        if (book.kind === 'epub') {
+          epubBytes = bytes;
+          await openEpub(el, bytes);
+        }
         else await openPdf(bytes);
         if (alive) status = '';
       } catch (e) {
@@ -164,6 +167,51 @@
   }
 
   // ── EPUB ──
+  // EPUB 쪽 안쪽 여백(px). 두 쪽 보기에서는 가운데 틈이 이 두 배가 된다.
+  const EPUB_PAD_X = 56;
+  let epubBytes: ArrayBuffer | null = null;
+  let lastEpubCfi = '';
+
+  // 글자 크기 (기기에 기억). 버튼으로 한 단계씩 바꾼다.
+  const FONT_STEPS = [90, 100, 110, 120, 140, 160, 180];
+  let fontPct = $state(readFont());
+
+  function readFont(): number {
+    try {
+      const v = Number(localStorage.getItem('ebook.font'));
+      return FONT_STEPS.includes(v) ? v : 100;
+    } catch {
+      return 100;
+    }
+  }
+
+  function changeFont(step: number) {
+    const i = FONT_STEPS.indexOf(fontPct);
+    const next = FONT_STEPS[Math.min(Math.max(i + step, 0), FONT_STEPS.length - 1)];
+    if (next === fontPct) return;
+    fontPct = next;
+    try {
+      localStorage.setItem('ebook.font', String(next));
+    } catch {
+      /* ignore */
+    }
+    rendition?.themes.fontSize(`${next}%`);
+  }
+
+  // 같은 자리에서 EPUB을 다시 연다 (쪽 구성이 바뀔 때)
+  async function reopenEpub() {
+    if (!epubView || !epubBytes) return;
+    const cfi = lastEpubCfi || reading.position;
+    resizeObserver?.disconnect();
+    resizeObserver = null;
+    rendition?.destroy?.();
+    rendition = null;
+    epubBook?.destroy?.();
+    epubBook = null;
+    startAt = cfi;
+    await openEpub(epubView, epubBytes);
+  }
+
   // EPUB 쪽 크기: A4 비율(세로/가로 ≈ 1.414)의 쪽을 틀 안에 가운데 맞춘다.
   // 두 쪽 보기에서는 쪽 두 개를 나란히 놓은 크기가 된다.
   const PAGE_RATIO = 1.414;
@@ -190,9 +238,10 @@
       height: el.clientHeight,
       flow: 'paginated',
       spread: 'none',
-      // 두 쪽 보기에서 양쪽 쪽 사이 여백을 없앤다 (기본값은 여백이 생긴다)
-      gap: 0,
+      // 두 쪽 보기에서 가운데에 쪽 여백만큼 틈을 둔다 (쪽 바깥 여백과 같은 크기의 두 배)
+      gap: spread ? EPUB_PAD_X * 2 : 0,
     });
+    rendition.themes.fontSize(`${fontPct}%`);
     if (spread) rendition.spread('always');
 
     epubBook.loaded.navigation.then((nav: { toc: { label: string; href: string }[] }) => {
@@ -200,6 +249,7 @@
     });
 
     rendition.on('relocated', (loc: any) => {
+      lastEpubCfi = loc.start.cfi;
       const href = String(loc.start.href ?? '').split('#')[0];
       const chapter = toc.find((t: Toc) => t.href.split('#')[0] === href)?.label ?? '';
       const page = loc.start.displayed?.page ?? 0;
@@ -415,10 +465,8 @@
     } catch {
       /* ignore */
     }
-    if (isEpub) {
-      rendition?.spread(spread ? 'always' : 'none');
-      sizeEpubStage();
-    }
+    // 쪽 사이 여백은 열을 만들 때 정해지므로 EPUB은 같은 자리에서 다시 연다
+    if (isEpub) void reopenEpub();
     else void renderPdf(pageNo);
   }
 
@@ -522,6 +570,10 @@
       <button class="btn" class:on={tocOpen} onclick={() => (tocOpen = !tocOpen)} title="목차">
         <i class="fa-solid fa-list-ul"></i>
       </button>
+    {/if}
+    {#if isEpub}
+      <button class="btn" onclick={() => changeFont(-1)} disabled={fontPct <= FONT_STEPS[0]} title="글자 작게" aria-label="글자 작게">A−</button>
+      <button class="btn" onclick={() => changeFont(1)} disabled={fontPct >= FONT_STEPS[FONT_STEPS.length - 1]} title="글자 크게" aria-label="글자 크게">A+</button>
     {/if}
     <button class="btn" onclick={prev} title="이전 (←)" aria-label="이전"><i class="fa-solid fa-chevron-left"></i></button>
     {#if !isEpub}
@@ -788,7 +840,7 @@
   .epub-stage {
     flex: none;
     box-sizing: border-box;
-    padding: 1.5rem 2.5rem;
+    padding: 2.25rem 3.5rem;
     background: #fff;
     border-radius: 2px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
