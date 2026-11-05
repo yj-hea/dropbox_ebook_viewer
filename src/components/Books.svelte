@@ -38,6 +38,7 @@
   import BookNotebook from './BookNotebook.svelte';
   import ShelfDialog from './ShelfDialog.svelte';
   import { flushNotes } from '../stores/bookNotes';
+  import { statusMessage } from '../stores/note';
 
   interface Props {
     root: string;
@@ -168,9 +169,15 @@
     return [{ key: FAV_KEY, folder: '', fav: true, books: favs }, ...result];
   });
 
-  function toggleFav(book: Book) {
-    const st = getState(book.rel);
+  // 기록을 아직 읽지 못한 책(처음 보는 책이거나 읽기 실패)도 즐겨찾기할 수 있도록, 필요하면 다시 읽는다
+  async function toggleFav(book: Book) {
+    let st = getState(book.rel);
+    if (!st) {
+      await loadStates(root, [book]);
+      st = getState(book.rel);
+    }
     if (st) setState(root, setFavorite(st, !st.favorite));
+    else statusMessage.set('기록을 불러오지 못해 즐겨찾기를 바꿀 수 없습니다. 잠시 뒤 다시 눌러 주세요.');
   }
 
   async function submitCreate({ name, folder }: { name: string; folder: string }) {

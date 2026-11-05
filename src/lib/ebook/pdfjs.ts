@@ -28,5 +28,7 @@ export function documentParams(pdfjs: typeof PdfJs, data: Uint8Array) {
     cMapUrl: `${base}/cmaps/`,
     cMapPacked: true,
     standardFontDataUrl: `${base}/standard_fonts/`,
+    // JPEG 2000 이미지를 풀 때 쓰는 디코더 (없으면 그 이미지가 빈 채로 그려진다)
+    wasmUrl: `${base}/wasm/`,
   };
 }
