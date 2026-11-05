@@ -216,49 +216,64 @@ export function getState(rel: string): ReadingState | undefined {
   return get(readingStates)[rel];
 }
 
-/** 기록 파일 내용. 파일이 없으면 null, 읽기가 실패하면 예외를 던진다. */
-async function readStateFile(root: string, rel: string): Promise<string | null> {
-  const dl = await downloadFile(statePath(root, rel));
-  if (dl) {
-    revs.set(rel, dl.rev);
-    return dl.content;
-  }
-  // 예전 이름으로 저장된 기록이 있으면 읽는다 (저장은 새 이름으로 한다)
-  const encoded = await downloadFile(legacyEncodedStatePath(root, rel));
-  if (encoded) return encoded.content;
-  const legacy = legacyStatePath(root, rel);
-  if (!legacy) return null;
-  const old = await downloadFile(legacy);
-  return old ? old.content : null;
+/**
+ * 폴더의 파일 이름 목록. 목록을 못 받으면 예외를 던진다 (빈 목록으로 보고 덮어쓰지 않도록).
+ */
+async function listNames(dir: string): Promise<Set<string>> {
+  const entries = await listFolder(dir);
+  return new Set(entries.filter((e) => e.type === 'file').map((e) => e.name));
 }
 
-/** 목록의 책마다 기록을 읽는다. 기록 파일이 없으면 지금을 처음 본 날짜로 만들어 바로 저장한다. */
+/**
+ * 책마다 기록을 읽는다. 기록 폴더 목록을 한 번 받아서 있는 파일만 내려받는다.
+ * 기록이 없는 책은 요청 없이 새 기록을 만든다. 읽기에 실패한 책은 건드리지 않는다.
+ */
 export async function loadStates(root: string, books: Book[]): Promise<void> {
   const now = new Date().toISOString();
-  const results = await Promise.all(
+  const names = await listNames(`${base(root)}/${STATE_DIR}`);
+  const legacyNames = books.some((b) => b.rel.startsWith('ebook/'))
+    ? await listNames(`${base(root)}/ebook/.reading`)
+    : new Set<string>();
+
+  let failed = 0;
+  const newlyKnown: string[] = [];
+  const created: string[] = [];
+  await Promise.all(
     books.map(async (b) => {
       try {
-        const raw = await readStateFile(root, b.rel);
+        // 새 이름 → 예전 인코딩 이름 → 가장 예전 위치 순서로 찾는다
+        const current = `${recordName(b.rel)}.json`;
+        const encoded = `${legacyRecordName(b.rel)}.json`;
+        const oldest = legacyStatePath(root, b.rel);
+        let raw: string | null = null;
+        if (names.has(current)) {
+          const dl = await downloadFile(statePath(root, b.rel));
+          if (dl) {
+            revs.set(b.rel, dl.rev);
+            raw = dl.content;
+          }
+        } else if (names.has(encoded)) {
+          const dl = await downloadFile(legacyEncodedStatePath(root, b.rel));
+          raw = dl ? dl.content : null;
+        } else if (oldest && legacyNames.has(oldest.split('/').pop() ?? '')) {
+          const dl = await downloadFile(oldest);
+          raw = dl ? dl.content : null;
+        }
         const state = raw !== null ? parseState(raw, b.rel, now) : emptyState(b.rel, now);
-        return { rel: b.rel, state, isNew: raw === null };
+        readingStates.update((all) => ({ ...all, [b.rel]: state }));
+        newlyKnown.push(b.rel);
+        if (raw === null) created.push(b.rel);
       } catch {
         // 읽기에 실패한 책은 기존 기록을 그대로 두고, 저장도 하지 않는다
-        return null;
+        failed++;
       }
     }),
   );
-  const loaded = results.filter((r): r is NonNullable<typeof r> => r !== null);
-  if (loaded.length < results.length) {
+  if (failed > 0) {
     statusMessage.set('일부 책의 읽기 기록을 불러오지 못했습니다. 목록을 새로고침해 주세요.');
   }
-  readingStates.update((all) => ({
-    ...all,
-    ...Object.fromEntries(loaded.map((l) => [l.rel, l.state])),
-  }));
-  for (const l of loaded) {
-    known.add(l.rel);
-    if (l.isNew) scheduleSave(root, l.rel);
-  }
+  for (const rel of newlyKnown) known.add(rel);
+  for (const rel of created) scheduleSave(root, rel);
 }
 
 /** 예약된 저장을 모두 바로 보낸다 (창을 닫기 전에). */

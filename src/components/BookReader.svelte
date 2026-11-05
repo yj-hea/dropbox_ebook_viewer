@@ -539,7 +539,9 @@
     {/if}
 
     {#if isEpub}
-      <div class="epub-stage" bind:this={stage}></div>
+      <div class="epub-frame">
+        <div class="epub-stage" bind:this={stage}></div>
+      </div>
       {#if tocOpen}
         <ul class="toc">
           {#each toc as t (t.href + t.label)}
@@ -743,10 +745,22 @@
   .status.err {
     color: #c0392b;
   }
-  .epub-stage {
+  /* PDF처럼 바깥 배경 위에 흰 쪽이 놓인 모양. 쪽 가장자리에 여백을 둔다. */
+  .epub-frame {
     flex: 1;
     min-width: 0;
     height: 100%;
+    box-sizing: border-box;
+    padding: 1rem clamp(0.75rem, 4vw, 3rem);
+    background: var(--bg-elev);
+  }
+  .epub-stage {
+    height: 100%;
+    width: 100%;
+    background: #fff;
+    border-radius: 2px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+    overflow: hidden;
   }
   .pdf-stage {
     flex: 1;
