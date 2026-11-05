@@ -2,6 +2,8 @@
   import { downloadBytes } from '../lib/dropbox/api';
   import { bookmarkAt, type Book, type Highlight, type ReadingState } from '../lib/ebook/state';
   import { documentParams, loadPdfJs } from '../lib/ebook/pdfjs';
+  import { bodyRules, readEpubStyle, saveEpubStyle, type EpubStyle } from '../lib/ebook/epubStyle';
+  import EpubSettings from './EpubSettings.svelte';
   import { loadNote, scheduleNote } from '../stores/bookNotes';
   import 'pdfjs-dist/web/pdf_viewer.css';
 
@@ -167,33 +169,36 @@
   }
 
   // ── EPUB ──
-  // 두 쪽 보기에서 두 쪽 사이의 틈(px)
-  const SPREAD_GUTTER = 32;
+  // 두 쪽 보기에서 두 쪽 사이의 틈 = 좌우 여백의 1.8배
+  const spreadGutter = (style: EpubStyle) => (spread ? Math.round(style.padX * 1.8) : 0);
   let epubBytes: ArrayBuffer | null = null;
   let lastEpubCfi = '';
 
-  // 글자 크기 (기기에 기억). 버튼으로 10%씩 바꾸며, 0 이하로 내려가 글자가 사라지는 것만 막는다.
-  let fontPct = $state(readFont());
+  // EPUB 읽기 설정 (글자 크기, 줄간격, 문단 간격, 여백). 기기에 기억한다.
+  let epubStyle = $state<EpubStyle>(readEpubStyle());
+  let settingsOpen = $state(false);
 
-  function readFont(): number {
-    try {
-      const v = Number(localStorage.getItem('ebook.font'));
-      return v > 0 ? v : 100;
-    } catch {
-      return 100;
-    }
+  // 설정을 본문과 쪽에 적용한다. 쪽 여백은 쪽 바깥 틀에, 나머지는 본문 글에 준다.
+  function applyEpubStyle(resize = true) {
+    if (stage) stage.style.padding = `${epubStyle.padY}px ${epubStyle.padX}px`;
+    sizeEpubStage(resize);
+    if (!rendition) return;
+    rendition.themes.register('reader', bodyRules(epubStyle));
+    rendition.themes.select('reader');
+    rendition.themes.fontSize(`${epubStyle.font}%`);
+  }
+
+  function updateEpubStyle(next: EpubStyle) {
+    const gapChanged = spreadGutter(next) !== spreadGutter(epubStyle);
+    epubStyle = next;
+    saveEpubStyle(next);
+    // 틈은 열을 만들 때 정해지므로, 틈이 바뀌면 같은 자리에서 다시 연다
+    if (gapChanged && isEpub) void reopenEpub();
+    else applyEpubStyle();
   }
 
   function changeFont(delta: number) {
-    const next = Math.max(10, fontPct + delta);
-    if (next === fontPct) return;
-    fontPct = next;
-    try {
-      localStorage.setItem('ebook.font', String(next));
-    } catch {
-      /* ignore */
-    }
-    rendition?.themes.fontSize(`${next}%`);
+    updateEpubStyle({ ...epubStyle, font: Math.max(10, epubStyle.font + delta) });
   }
 
   // 같은 자리에서 EPUB을 다시 연다 (쪽 구성이 바뀔 때)
@@ -217,14 +222,14 @@
   let epubView = $state<HTMLDivElement>();
 
   // 쪽(흰 종이)의 크기를 정하고, 그 안쪽 여백을 뺀 영역에 본문을 그린다. 여백은 본문 밖에 두어야 열 계산이 맞는다.
-  function sizeEpubStage() {
+  function sizeEpubStage(resize = true) {
     if (!epubFrame || !stage || !epubView) return;
     const availW = Math.max(epubFrame.clientWidth - 32, 200);
     const availH = Math.max(epubFrame.clientHeight - 32, 200);
     const pageW = Math.min(spread ? availW / 2 : availW, availH / PAGE_RATIO);
     stage.style.width = `${Math.floor(pageW * (spread ? 2 : 1))}px`;
     stage.style.height = `${Math.floor(pageW * PAGE_RATIO)}px`;
-    rendition?.resize(epubView.clientWidth, epubView.clientHeight);
+    if (resize) rendition?.resize(epubView.clientWidth, epubView.clientHeight);
   }
 
   async function openEpub(el: HTMLDivElement, bytes: ArrayBuffer) {
@@ -237,9 +242,9 @@
       flow: 'paginated',
       spread: 'none',
       // 두 쪽 보기에서 가운데 틈은 얇게 둔다. 한 장을 둘로 나눈 것처럼 보이도록 쪽 안쪽 여백을 줄인다.
-      gap: spread ? SPREAD_GUTTER : 0,
+      gap: spreadGutter(epubStyle),
     });
-    rendition.themes.fontSize(`${fontPct}%`);
+    applyEpubStyle(false);
     if (spread) rendition.spread('always');
 
     epubBook.loaded.navigation.then((nav: { toc: { label: string; href: string }[] }) => {
@@ -550,6 +555,10 @@
   }
 </script>
 
+{#if isEpub && settingsOpen}
+  <EpubSettings style={epubStyle} onChange={updateEpubStyle} onClose={() => (settingsOpen = false)} />
+{/if}
+
 <svelte:window onkeydown={onKey} />
 <svelte:document onfullscreenchange={onFullscreenChange} />
 
@@ -572,6 +581,9 @@
     {#if isEpub}
       <button class="btn" onclick={() => changeFont(-10)} title="글자 작게" aria-label="글자 작게">A−</button>
       <button class="btn" onclick={() => changeFont(10)} title="글자 크게" aria-label="글자 크게">A+</button>
+      <button class="btn" class:on={settingsOpen} onclick={() => (settingsOpen = !settingsOpen)} title="읽기 설정" aria-label="읽기 설정">
+        <i class="fa-solid fa-sliders"></i>
+      </button>
     {/if}
     <button class="btn" onclick={prev} title="이전 (←)" aria-label="이전"><i class="fa-solid fa-chevron-left"></i></button>
     {#if !isEpub}
