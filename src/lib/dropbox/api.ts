@@ -23,12 +23,33 @@ async function withSlot<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function dbxFetch(url: string, init?: RequestInit): Promise<Response> {
+// 파일 쓰기는 한 번에 하나씩, 간격을 두고 보낸다. 몰아서 쓰면 Dropbox가 429(쓰기 과다)로 막는다.
+const WRITE_GAP_MS = 800;
+let writeQueue: Promise<unknown> = Promise.resolve();
+let lastWriteAt = 0;
+
+function paced<T>(task: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(async () => {
+    const wait = lastWriteAt + WRITE_GAP_MS - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastWriteAt = Date.now();
+    return task();
+  });
+  writeQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function sendWithRetry(url: string, init?: RequestInit): Promise<Response> {
   for (let tries = 0; ; tries++) {
     const res = await withSlot(() => fetch(url, init));
     if (res.status !== 429 || tries >= MAX_RETRIES) return res;
     await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** tries));
   }
+}
+
+export async function dbxFetch(url: string, init?: RequestInit): Promise<Response> {
+  if (url.endsWith('/files/upload')) return paced(() => sendWithRetry(url, init));
+  return sendWithRetry(url, init);
 }
 
 const RPC_URL = 'https://api.dropboxapi.com/2';

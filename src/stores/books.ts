@@ -27,7 +27,8 @@ export const STATE_DIR = '.ebook-reading';
 export const readingStates = writable<Record<string, ReadingState>>({});
 
 // 같은 파일에 짧은 시간 안에 여러 번 쓰면 Dropbox 가 429 로 막으므로 넉넉히 모아서 쓴다
-const SAVE_DELAY = 2000;
+// 쪽을 넘길 때마다 쓰지 않도록 조금 모아서 쓴다. 창을 숨기거나 닫을 때는 바로 보낸다.
+const SAVE_DELAY = 5000;
 const MAX_TRIES = 4;
 /** 마지막으로 저장에 성공한 내용 (같으면 다시 쓰지 않는다) */
 const saved = new Map<string, string>();
@@ -287,4 +288,7 @@ export function flushStates(): void {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('pagehide', flushStates);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushStates();
+  });
 }
