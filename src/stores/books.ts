@@ -16,6 +16,7 @@ import {
 } from '../lib/dropbox/api';
 import { bookKind, emptyState, parseState, type Book, type ReadingState } from '../lib/ebook/state';
 import { crashPath, isConflict } from '../lib/ebook/conflict';
+import { legacyRecordName, recordName } from '../lib/ebook/paths';
 import { statusMessage } from './note';
 import { toRelative } from './vault';
 import { notePath } from './bookNotes';
@@ -61,7 +62,11 @@ function base(root: string): string {
 }
 
 function statePath(root: string, rel: string): string {
-  return `${base(root)}/${STATE_DIR}/${encodeURIComponent(rel)}.json`;
+  return `${base(root)}/${STATE_DIR}/${recordName(rel)}.json`;
+}
+
+function legacyEncodedStatePath(root: string, rel: string): string {
+  return `${base(root)}/${STATE_DIR}/${legacyRecordName(rel)}.json`;
 }
 
 /** 이전 버전이 `ebook/` 폴더 안에 남긴 기록 위치 (그 폴더 바로 아래 책만 해당) */
@@ -71,7 +76,7 @@ function legacyStatePath(root: string, rel: string): string | null {
 }
 
 export function coverPath(root: string, rel: string): string {
-  return `${base(root)}/${STATE_DIR}/${encodeURIComponent(rel)}.cover.jpg`;
+  return `${base(root)}/${STATE_DIR}/${recordName(rel)}.cover.jpg`;
 }
 
 export interface Library {
@@ -218,6 +223,9 @@ async function readStateFile(root: string, rel: string): Promise<string | null> 
     revs.set(rel, dl.rev);
     return dl.content;
   }
+  // 예전 이름으로 저장된 기록이 있으면 읽는다 (저장은 새 이름으로 한다)
+  const encoded = await downloadFile(legacyEncodedStatePath(root, rel));
+  if (encoded) return encoded.content;
   const legacy = legacyStatePath(root, rel);
   if (!legacy) return null;
   const old = await downloadFile(legacy);

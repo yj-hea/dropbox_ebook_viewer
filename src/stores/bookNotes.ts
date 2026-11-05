@@ -4,6 +4,7 @@
  */
 import { downloadFile, uploadText } from '../lib/dropbox/api';
 import { crashPath, isConflict } from '../lib/ebook/conflict';
+import { legacyRecordName, recordName } from '../lib/ebook/paths';
 import { statusMessage } from './note';
 
 const SAVE_DELAY = 2000;
@@ -16,7 +17,11 @@ function base(root: string): string {
 }
 
 export function notePath(root: string, rel: string): string {
-  return `${base(root)}/${STATE_DIR}/${encodeURIComponent(rel)}.note.md`;
+  return `${base(root)}/${STATE_DIR}/${recordName(rel)}.note.md`;
+}
+
+function legacyNotePath(root: string, rel: string): string {
+  return `${base(root)}/${STATE_DIR}/${legacyRecordName(rel)}.note.md`;
 }
 
 /** 읽기에 성공한 노트의 내용. 이 값이 있어야 저장을 허용한다 (읽기 실패 때 빈 내용으로 덮어쓰지 않도록). */
@@ -30,7 +35,9 @@ const revs = new Map<string, string>();
  */
 export async function loadNote(root: string, rel: string): Promise<string> {
   const dl = await downloadFile(notePath(root, rel));
-  const text = dl ? dl.content : '';
+  // 예전 이름으로 저장된 노트가 있으면 그 내용을 읽는다 (저장은 새 이름으로 한다)
+  const old = dl ? null : await downloadFile(legacyNotePath(root, rel));
+  const text = dl ? dl.content : old ? old.content : '';
   if (dl) revs.set(rel, dl.rev);
   confirmed.set(rel, text);
   return text;
