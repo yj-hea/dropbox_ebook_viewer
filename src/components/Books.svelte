@@ -677,18 +677,30 @@
 
 <style>
   .shelf {
+    --pad: clamp(0.75rem, 3vw, 2rem);
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 1rem clamp(0.75rem, 3vw, 2rem);
+    padding: 0 0 1rem;
     background: var(--bg);
     color: var(--text);
   }
+  /* 제목과 보기·정렬 버튼은 목록을 스크롤해도 위에 남는다 */
   .head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.8rem;
+    padding: 1rem var(--pad) 0.6rem;
+    margin-bottom: 0.4rem;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+  }
+  .shelf > .msg {
+    padding: 0 var(--pad);
   }
   h2 {
     margin: 0;
@@ -725,6 +737,7 @@
   }
   .shelf-group {
     margin-bottom: 1.6rem;
+    padding: 0 var(--pad);
   }
   .shelf-title {
     margin: 0 0 0.6rem;
