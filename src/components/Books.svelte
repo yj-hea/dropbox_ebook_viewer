@@ -24,7 +24,9 @@
     type SortKey,
   } from '../lib/ebook/state';
   import {
-    coverPath,
+    hasThumb,
+    markThumb,
+    thumbPath,
     createShelf,
     flushStates,
     getState,
@@ -121,7 +123,6 @@
 
   function setView(v: 'list' | 'shelf') {
     view = v;
-    if (v === 'shelf') void loadCovers(root, books);
     try {
       localStorage.setItem('books.view', v);
     } catch {
@@ -260,7 +261,7 @@
       folders = lib.folders;
       await loadStates(r, books);
       // 표지는 서재 보기에서만 만든다 (큰 책은 내려받는 데 오래 걸린다)
-      if (view === 'shelf') void loadCovers(r, books);
+      void loadCovers(r, books);
       restoreOpenBook();
     } catch (e) {
       error = '책 목록을 불러오지 못했습니다: ' + (e instanceof Error ? e.message : String(e));
@@ -270,12 +271,14 @@
   }
 
   // 표지는 한 번 만들어 저장해 두고, 다음부터는 그 이미지를 받는다
+  // 썸네일은 한 번 만들어 기록 폴더에 저장해 두고, 다음부터는 그 파일만 받는다.
+  // 기록 폴더 목록에 없는 썸네일은 요청 없이 바로 만든다.
   async function loadCovers(r: string, list: Book[]) {
     for (const b of list) {
       if (covers[b.rel]) continue;
-      const path = coverPath(r, b.rel);
+      const path = thumbPath(r, b.rel);
       try {
-        let bytes = await downloadBytes(path);
+        let bytes: ArrayBuffer | null = hasThumb(b.rel) ? await downloadBytes(path) : null;
         if (!bytes) {
           const book = await downloadBytes(b.path);
           if (!book) continue;
@@ -283,6 +286,7 @@
           if (!blob) continue;
           bytes = await blob.arrayBuffer();
           await uploadBinary(path, bytes, 'overwrite');
+          markThumb(b.rel);
         }
         const url = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
         coverUrls.set(b.rel, url);
@@ -597,7 +601,11 @@
                 <li class="item">
                   <div class="row">
                     <button class="open" onclick={() => open(book)}>
-                      <i class="fa-solid {book.kind === 'pdf' ? 'fa-file-pdf' : 'fa-book'}"></i>
+                      {#if covers[book.rel]}
+                        <img class="thumb" src={covers[book.rel]} alt="" />
+                      {:else}
+                        <i class="fa-solid {book.kind === 'pdf' ? 'fa-file-pdf' : 'fa-book'}"></i>
+                      {/if}
                       <span class="name">{book.name}</span>
                     </button>
                     <button class="btn" class:on={st?.favorite} onclick={() => toggleFav(book)} title="즐겨찾기" aria-label="즐겨찾기">
@@ -783,6 +791,14 @@
     display: flex;
     align-items: center;
     gap: 0.4rem;
+  }
+  .thumb {
+    width: 32px;
+    height: 46px;
+    object-fit: cover;
+    border-radius: 2px;
+    flex: none;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
   }
   .open {
     flex: 1;

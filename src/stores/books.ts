@@ -77,8 +77,24 @@ function legacyStatePath(root: string, rel: string): string | null {
   return m ? `${base(root)}/ebook/.reading/${m[1]}.json` : null;
 }
 
-export function coverPath(root: string, rel: string): string {
-  return `${base(root)}/${STATE_DIR}/${recordName(rel)}.cover.jpg`;
+/** 썸네일 파일 경로 (목록과 서재에서 함께 쓴다. 작아서 빨리 받는다) */
+export function thumbPath(root: string, rel: string): string {
+  return `${base(root)}/${STATE_DIR}/${recordName(rel)}.thumb.jpg`;
+}
+
+/** 기록 폴더에서 마지막으로 본 파일 이름들. 썸네일이 있는지 요청 없이 확인하는 데 쓴다. */
+let folderNames = new Set<string>();
+
+function thumbName(rel: string): string {
+  return `${recordName(rel)}.thumb.jpg`;
+}
+
+export function hasThumb(rel: string): boolean {
+  return folderNames.has(thumbName(rel));
+}
+
+export function markThumb(rel: string): void {
+  folderNames.add(thumbName(rel));
 }
 
 export interface Library {
@@ -131,7 +147,8 @@ export async function moveBook(root: string, book: Book, folder: string): Promis
   pending.delete(book.rel);
 
   await moveFile(book.path, destPath);
-  await moveFile(coverPath(root, book.rel), coverPath(root, destRel)).catch(() => {});
+  await moveFile(thumbPath(root, book.rel), thumbPath(root, destRel)).catch(() => {});
+  if (hasThumb(book.rel)) markThumb(destRel);
   await moveFile(notePath(root, book.rel), notePath(root, destRel)).catch(() => {});
 
   const st = get(readingStates)[book.rel];
@@ -227,6 +244,7 @@ async function listNames(dir: string): Promise<Set<string>> {
 export async function loadStates(root: string, books: Book[]): Promise<void> {
   const now = new Date().toISOString();
   const names = await listNames(`${base(root)}/${STATE_DIR}`);
+  folderNames = names;
   const legacyNames = books.some((b) => b.rel.startsWith('ebook/'))
     ? await listNames(`${base(root)}/ebook/.reading`)
     : new Set<string>();

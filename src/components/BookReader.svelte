@@ -118,7 +118,7 @@
 
   // 책이 바뀌면 해당 형식의 뷰어를 새로 만든다
   $effect(() => {
-    const el = stage;
+    const el = book.kind === 'epub' ? epubView : stage;
     const path = book.path;
     if (!el) return;
     let alive = true;
@@ -168,17 +168,17 @@
   // 두 쪽 보기에서는 쪽 두 개를 나란히 놓은 크기가 된다.
   const PAGE_RATIO = 1.414;
   let epubFrame = $state<HTMLDivElement>();
+  let epubView = $state<HTMLDivElement>();
 
+  // 쪽(흰 종이)의 크기를 정하고, 그 안쪽 여백을 뺀 영역에 본문을 그린다. 여백은 본문 밖에 두어야 열 계산이 맞는다.
   function sizeEpubStage() {
-    if (!epubFrame || !stage) return;
+    if (!epubFrame || !stage || !epubView) return;
     const availW = Math.max(epubFrame.clientWidth - 32, 200);
     const availH = Math.max(epubFrame.clientHeight - 32, 200);
     const pageW = Math.min(spread ? availW / 2 : availW, availH / PAGE_RATIO);
-    const w = Math.floor(pageW * (spread ? 2 : 1));
-    const h = Math.floor(pageW * PAGE_RATIO);
-    stage.style.width = `${w}px`;
-    stage.style.height = `${h}px`;
-    rendition?.resize(w, h);
+    stage.style.width = `${Math.floor(pageW * (spread ? 2 : 1))}px`;
+    stage.style.height = `${Math.floor(pageW * PAGE_RATIO)}px`;
+    rendition?.resize(epubView.clientWidth, epubView.clientHeight);
   }
 
   async function openEpub(el: HTMLDivElement, bytes: ArrayBuffer) {
@@ -561,7 +561,9 @@
 
     {#if isEpub}
       <div class="epub-frame" bind:this={epubFrame}>
-        <div class="epub-stage" bind:this={stage}></div>
+        <div class="epub-stage" bind:this={stage}>
+          <div class="epub-view" bind:this={epubView}></div>
+        </div>
       </div>
       {#if tocOpen}
         <ul class="toc">
@@ -779,8 +781,14 @@
     justify-content: center;
     overflow: hidden;
   }
+  .epub-view {
+    width: 100%;
+    height: 100%;
+  }
   .epub-stage {
     flex: none;
+    box-sizing: border-box;
+    padding: 1.5rem 2.5rem;
     background: #fff;
     border-radius: 2px;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
