@@ -12,8 +12,7 @@ export async function makeCover(bytes: ArrayBuffer, kind: BookKind): Promise<Blo
 
 async function pdfCover(bytes: ArrayBuffer): Promise<Blob | null> {
   const pdfjs = await loadPdfJs();
-  const task = pdfjs.getDocument(documentParams(pdfjs, new Uint8Array(bytes)));
-  const doc = await task.promise;
+  const doc = await pdfjs.getDocument(documentParams(pdfjs, new Uint8Array(bytes))).promise;
   try {
     const page = await doc.getPage(1);
     const base = page.getViewport({ scale: 1 });
@@ -26,7 +25,8 @@ async function pdfCover(bytes: ArrayBuffer): Promise<Blob | null> {
     await page.render({ canvas, canvasContext: ctx, viewport }).promise;
     return await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.85));
   } finally {
-    await task.destroy();
+    // destroy()는 공용 워커를 끝내므로 쪽 데이터만 비운다
+    await doc.cleanup();
   }
 }
 

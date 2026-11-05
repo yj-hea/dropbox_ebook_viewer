@@ -66,7 +66,7 @@
   let spread = $state(readSpread());
   // 터치 기기는 탭 영역 넘김을 쓰지 않고 드래그로만 넘긴다
   const touchDevice = typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
-  let pdfDoc: { numPages: number; getPage: (n: number) => Promise<any>; destroy: () => void } | null = null;
+  let pdfDoc: { numPages: number; getPage: (n: number) => Promise<any>; cleanup?: () => Promise<unknown> } | null = null;
   let renderSeq = 0;
 
   // EPUB 상태
@@ -153,8 +153,11 @@
     rendition = null;
     epubBook?.destroy?.();
     epubBook = null;
-    void pdfDoc?.destroy();
+    // destroy()는 공용 워커까지 끝내서 다음 책이 열리지 않으므로, 쪽 데이터만 비운다
+    void pdfDoc?.cleanup?.().catch(() => {});
     pdfDoc = null;
+    for (const t of renderTasks) t.cancel();
+    renderTasks = [];
     renderSeq++;
     pending = null;
     toc = [];
