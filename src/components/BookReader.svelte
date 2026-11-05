@@ -167,8 +167,8 @@
   }
 
   // ── EPUB ──
-  // EPUB 쪽 안쪽 여백(px). 두 쪽 보기에서는 가운데 틈이 이 두 배가 된다.
-  const EPUB_PAD_X = 56;
+  // 두 쪽 보기에서 두 쪽 사이의 틈(px)
+  const SPREAD_GUTTER = 32;
   let epubBytes: ArrayBuffer | null = null;
   let lastEpubCfi = '';
 
@@ -236,8 +236,8 @@
       height: el.clientHeight,
       flow: 'paginated',
       spread: 'none',
-      // 두 쪽 보기에서 가운데에 쪽 여백만큼 틈을 둔다 (쪽 바깥 여백과 같은 크기의 두 배)
-      gap: spread ? EPUB_PAD_X * 2 : 0,
+      // 두 쪽 보기에서 가운데 틈은 얇게 둔다. 한 장을 둘로 나눈 것처럼 보이도록 쪽 안쪽 여백을 줄인다.
+      gap: spread ? SPREAD_GUTTER : 0,
     });
     rendition.themes.fontSize(`${fontPct}%`);
     if (spread) rendition.spread('always');
