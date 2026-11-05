@@ -136,29 +136,77 @@
 
   // 같은 폴더의 책끼리 묶는다 (서가). 최상위 폴더가 먼저, 나머지는 경로순.
   // 각 서가 안에서는 최근에 읽은 책이 위로 온다.
-  const shelves = $derived.by(() => {
-    const groups = new Map<string, { folder: string; books: { book: Book; st: ReturnType<typeof stateOf> }[] }>();
-    for (const f of folders) groups.set(f, { folder: f, books: [] });
-    for (const book of books) {
-      const g = groups.get(book.folder) ?? { folder: book.folder, books: [] };
-      g.books.push({ book, st: $readingStates[book.rel] });
-      groups.set(book.folder, g);
+  // 서가 보기 방식과 서가 순서 (기기에 기억한다)
+  let grouped = $state(readFlag('books.grouped', true));
+  let shelfOrder = $state<'name' | 'recent'>(readFlag('books.shelfRecent', false) ? 'recent' : 'name');
+
+  function readFlag(key: string, fallback: boolean): boolean {
+    try {
+      const v = localStorage.getItem(key);
+      return v === null ? fallback : v === '1';
+    } catch {
+      return fallback;
     }
-    // 책이 없는 서가는 보이지 않는다 (서가 만들기 대화상자의 상위 서가 목록에는 그대로 남는다)
-    const result = [...groups.values()]
-      .filter((g) => g.books.length > 0)
-      .sort((a, b) => {
-        if (a.folder === b.folder) return 0;
-        if (a.folder === '') return -1;
-        if (b.folder === '') return 1;
-        return a.folder.localeCompare(b.folder, 'ko');
-      })
-      .map((g) => ({
+  }
+
+  function saveFlag(key: string, on: boolean) {
+    try {
+      localStorage.setItem(key, on ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function toggleGrouped() {
+    grouped = !grouped;
+    saveFlag('books.grouped', grouped);
+  }
+
+  function setShelfOrder(v: 'name' | 'recent') {
+    shelfOrder = v;
+    saveFlag('books.shelfRecent', v === 'recent');
+  }
+
+  // 책을 서가별로 묶거나(기본), 전체 목록 하나로 보여 준다.
+  // 서가 순서는 이름순(기본)이나 서가 안에서 가장 최근에 읽은 책 순으로 정한다. 책 순서는 정렬 기준을 따른다.
+  const shelves = $derived.by(() => {
+    type Item = { book: Book; st: ReturnType<typeof stateOf> };
+    const lastOf = (items: Item[]) => items.reduce((max, i) => ((lastActivity(i.st) ?? '') > max ? (lastActivity(i.st) ?? '') : max), '');
+
+    let result: { key: string; folder: string; title: string; showFolder: boolean; fav: boolean; books: Item[] }[];
+    if (grouped) {
+      const groups = new Map<string, { folder: string; books: Item[] }>();
+      for (const f of folders) groups.set(f, { folder: f, books: [] });
+      for (const book of books) {
+        const g = groups.get(book.folder) ?? { folder: book.folder, books: [] };
+        g.books.push({ book, st: $readingStates[book.rel] });
+        groups.set(book.folder, g);
+      }
+      // 책이 없는 서가는 보이지 않는다 (서가 만들기 대화상자의 상위 서가 목록에는 그대로 남는다)
+      const filled = [...groups.values()].filter((g) => g.books.length > 0);
+      const ordered =
+        shelfOrder === 'recent'
+          ? filled.sort((a, b) => lastOf(b.books).localeCompare(lastOf(a.books)))
+          : filled.sort((a, b) => {
+              if (a.folder === b.folder) return 0;
+              if (a.folder === '') return -1;
+              if (b.folder === '') return 1;
+              return a.folder.localeCompare(b.folder, 'ko');
+            });
+      result = ordered.map((g) => ({
         key: g.folder,
         folder: g.folder,
+        title: shelfName(g.folder),
+        showFolder: false,
         fav: false,
         books: sortBooks(g.books, sortKey),
       }));
+    } else {
+      const all = books.map((book) => ({ book, st: $readingStates[book.rel] }));
+      result = all.length
+        ? [{ key: '__all__', folder: '', title: '전체', showFolder: true, fav: false, books: sortBooks(all, sortKey) }]
+        : [];
+    }
 
     // 즐겨찾기한 책은 위치와 상관없이 맨 위에 모아 보여 준다 (책은 원래 서가에도 그대로 있다)
     const favs = sortBooks(
@@ -166,7 +214,7 @@
       sortKey,
     );
     if (favs.length === 0) return result;
-    return [{ key: FAV_KEY, folder: '', fav: true, books: favs }, ...result];
+    return [{ key: FAV_KEY, folder: '', title: '즐겨찾기', showFolder: true, fav: true, books: favs }, ...result];
   });
 
   // 기록을 아직 읽지 못한 책(처음 보는 책이거나 읽기 실패)도 즐겨찾기할 수 있도록, 필요하면 다시 읽는다
@@ -458,6 +506,15 @@
       <h2>책</h2>
       <span class="count">{books.length}권</span>
       <div class="spacer"></div>
+      <button class="btn" class:on={!grouped} onclick={toggleGrouped} title={grouped ? '전체 목록으로 보기' : '서가별로 보기'} aria-label="보기 방식 바꾸기">
+        <i class="fa-solid {grouped ? 'fa-layer-group' : 'fa-list'}"></i>
+      </button>
+      {#if grouped}
+        <select class="sort" value={shelfOrder} onchange={(e) => setShelfOrder((e.currentTarget as HTMLSelectElement).value as 'name' | 'recent')} aria-label="서가 순서">
+          <option value="name">서가 이름순</option>
+          <option value="recent">서가 최근순</option>
+        </select>
+      {/if}
       <select class="sort" value={sortKey} onchange={(e) => setSort((e.currentTarget as HTMLSelectElement).value as SortKey)} aria-label="정렬">
         {#each SORT_KEYS as k (k)}
           <option value={k}>{SORT_LABELS[k]}</option>
@@ -498,7 +555,7 @@
               {#if shelf.fav}
                 <i class="fa-solid fa-star fav-ico"></i> 즐겨찾기
               {:else}
-                <i class="fa-solid fa-folder"></i> {shelfName(shelf.folder)}
+                <i class="fa-solid fa-folder"></i> {shelf.title}
               {/if}
               <span class="count">{shelf.books.length}권</span>
             </button>
@@ -521,7 +578,7 @@
                     {/if}
                   </button>
                   <div class="cap">{title(book.name)}</div>
-                  {#if shelf.fav}<div class="sub">{book.folder || '최상위 폴더'}</div>{/if}
+                  {#if shelf.showFolder}<div class="sub">{book.folder || '최상위 폴더'}</div>{/if}
                   {#if st && lastActivity(st)}<div class="sub">{fmt(lastActivity(st))}</div>{/if}
                   <div class="card-actions">
                     <button class="btn mv" class:on={st?.favorite} onclick={() => toggleFav(book)} title="즐겨찾기" aria-label="즐겨찾기">
@@ -563,7 +620,7 @@
                     </button>
                   </div>
                   <div class="meta">
-                    {#if shelf.fav}{book.folder || '최상위 폴더'} · {/if}
+                    {#if shelf.showFolder}{book.folder || '최상위 폴더'} · {/if}
                     추가 {fmt(st?.firstSeen)} · 마지막 {fmt(lastActivity(st))}
                     {#if st?.label}· {st.label}{/if}
                     {#if st && st.highlights.length}· 하이라이트 {st.highlights.length}{/if}
