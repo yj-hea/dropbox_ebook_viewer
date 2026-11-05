@@ -276,39 +276,53 @@
     return (history.state as { ebookView?: string } | null)?.ebookView;
   }
 
-  // 새로고침해도 읽던 책으로 돌아가도록 연 책의 경로를 기억한다
-  const OPEN_KEY = 'ebook.open';
+  // 지금 보는 책은 주소(#)에 적는다. 새로고침, 뒤로·앞으로 가기, 링크 공유가 모두 이 주소로 된다.
+  // 예: #/read/소설%2F책.epub , #/notes/소설%2F책.epub
   let restored = false;
 
+  function routeFor(kind: 'read' | 'notes', rel: string): string {
+    return `#/${kind}/${encodeURIComponent(rel)}`;
+  }
+
+  function parseRoute(): { kind: 'read' | 'notes'; rel: string } | null {
+    const m = /^#\/(read|notes)\/(.+)$/.exec(location.hash);
+    if (!m) return null;
+    try {
+      return { kind: m[1] as 'read' | 'notes', rel: decodeURIComponent(m[2]) };
+    } catch {
+      return null;
+    }
+  }
+
+  // 주소에 적힌 책이나 노트 화면을 다시 연다 (새로고침이나 링크로 들어왔을 때)
   function restoreOpenBook() {
     if (restored || current || notebook) return;
     restored = true;
-    try {
-      const rel = localStorage.getItem(OPEN_KEY);
-      const book = books.find((b) => b.rel === rel);
-      if (book) open(book);
-    } catch {
-      /* ignore */
+    const route = parseRoute();
+    const book = route && books.find((b) => b.rel === route.rel);
+    if (!route || !book) return;
+    if (route.kind === 'notes') {
+      history.replaceState({ ebookView: 'notebook' }, '', routeFor('notes', book.rel));
+      notebook = book;
+    } else {
+      open(book);
     }
   }
 
   function open(book: Book, at = '') {
     const st = getState(book.rel) ?? emptyState(book.rel, now());
     setState(root, startSession(st, now()));
-    try {
-      localStorage.setItem(OPEN_KEY, book.rel);
-    } catch {
-      /* ignore */
-    }
     // 노트 화면에서 넘어왔다면 그 항목을 책 항목으로 바꿔서 뒤로 가기가 한 번에 목록으로 돌아가게 한다
-    if (viewState() === 'notebook') history.replaceState({ ebookView: 'reader' }, '');
-    else if (viewState() !== 'reader') history.pushState({ ebookView: 'reader' }, '');
+    const url = routeFor('read', book.rel);
+    if (viewState() === 'reader' || viewState() === 'notebook') history.replaceState({ ebookView: 'reader' }, '', url);
+    else history.pushState({ ebookView: 'reader' }, '', url);
     startAt = at;
     current = book;
   }
 
   function openNotebook(book: Book) {
-    if (viewState() !== 'notebook') history.pushState({ ebookView: 'notebook' }, '');
+    const url = routeFor('notes', book.rel);
+    if (viewState() !== 'notebook') history.pushState({ ebookView: 'notebook' }, '', url);
     notebook = book;
   }
 
@@ -324,11 +338,6 @@
 
   // 책 기록을 정리하고 목록으로 돌아간다 (뒤로 가기로 들어온 경우에는 기록을 다시 줄이지 않는다)
   function finishReading() {
-    try {
-      localStorage.removeItem(OPEN_KEY);
-    } catch {
-      /* ignore */
-    }
     if (current) {
       const st = getState(current.rel);
       if (st) setState(root, endSession(st, now()));
