@@ -2,7 +2,7 @@
  * 책 표지 이미지를 만든다. EPUB 은 내장 표지, PDF 는 첫 쪽을 그린다.
  */
 import type { BookKind } from './state';
-import { loadPdfJs } from './pdfjs';
+import { documentParams, loadPdfJs } from './pdfjs';
 
 const COVER_WIDTH = 320;
 
@@ -12,7 +12,7 @@ export async function makeCover(bytes: ArrayBuffer, kind: BookKind): Promise<Blo
 
 async function pdfCover(bytes: ArrayBuffer): Promise<Blob | null> {
   const pdfjs = await loadPdfJs();
-  const task = pdfjs.getDocument({ data: new Uint8Array(bytes) });
+  const task = pdfjs.getDocument(documentParams(pdfjs, new Uint8Array(bytes)));
   const doc = await task.promise;
   try {
     const page = await doc.getPage(1);

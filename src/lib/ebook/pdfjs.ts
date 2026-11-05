@@ -16,3 +16,17 @@ export function loadPdfJs(): Promise<typeof PdfJs> {
   })();
   return loading;
 }
+
+/**
+ * 문서를 여는 옵션. 한글 등 PDF에 글꼴이 내장되지 않은 글자를 그리려면 글자 대응표(cMap)와
+ * 기본 글꼴이 필요하다. 없으면 그 글자가 빠진 채로 그려진다.
+ */
+export function documentParams(pdfjs: typeof PdfJs, data: Uint8Array) {
+  const base = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjs.version}`;
+  return {
+    data,
+    cMapUrl: `${base}/cmaps/`,
+    cMapPacked: true,
+    standardFontDataUrl: `${base}/standard_fonts/`,
+  };
+}

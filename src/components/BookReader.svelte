@@ -1,7 +1,7 @@
 <script lang="ts">
   import { downloadBytes } from '../lib/dropbox/api';
   import { bookmarkAt, type Book, type Highlight, type ReadingState } from '../lib/ebook/state';
-  import { loadPdfJs } from '../lib/ebook/pdfjs';
+  import { documentParams, loadPdfJs } from '../lib/ebook/pdfjs';
   import { loadNote, scheduleNote } from '../stores/bookNotes';
   import 'pdfjs-dist/web/pdf_viewer.css';
 
@@ -227,14 +227,30 @@
 
   // 터치 좌우 스와이프로 쪽 넘기기. 세로로 스크롤하는 동작과는 구분한다.
   let swipeFrom: { x: number; y: number } | null = null;
+  // 손가락이 화면에 있는 동안에는 쪽을 다시 그리지 않는다. 다시 그리면 터치 대상이 사라져서 넘김이 끊긴다.
+  let touching = false;
+  let deferredRender: number | null = null;
+
+  function endTouch() {
+    touching = false;
+    if (deferredRender !== null) {
+      const n = deferredRender;
+      deferredRender = null;
+      void renderPdf(n);
+    }
+  }
+
   function swipeStart(t: Touch | undefined) {
+    touching = true;
     swipeFrom = t ? { x: t.clientX, y: t.clientY } : null;
   }
   function swipeEnd(t: Touch | undefined) {
-    if (!swipeFrom || !t) return;
-    const dx = t.clientX - swipeFrom.x;
-    const dy = t.clientY - swipeFrom.y;
+    const from = swipeFrom;
     swipeFrom = null;
+    endTouch();
+    if (!from || !t) return;
+    const dx = t.clientX - from.x;
+    const dy = t.clientY - from.y;
     if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
     if (dx < 0) next();
     else prev();
@@ -262,7 +278,7 @@
   // ── PDF ──
   async function openPdf(bytes: ArrayBuffer) {
     const pdfjs = await loadPdfJs();
-    const doc = await pdfjs.getDocument({ data: new Uint8Array(bytes) }).promise;
+    const doc = await pdfjs.getDocument(documentParams(pdfjs, new Uint8Array(bytes))).promise;
     pdfDoc = doc as unknown as typeof pdfDoc;
     pageCount = doc.numPages;
     const start = Math.min(Math.max(Number(startAt || reading.position) || 1, 1), pageCount);
@@ -284,6 +300,10 @@
 
   async function renderPdf(n: number, pdfjs?: typeof import('pdfjs-dist')) {
     if (!pdfDoc || !pdfRow || !stage) return;
+    if (touching) {
+      deferredRender = n;
+      return;
+    }
     const seq = ++renderSeq;
     for (const t of renderTasks) t.cancel();
     renderTasks = [];
@@ -532,6 +552,10 @@
         onclick={onPdfClick}
         ontouchstart={(e) => swipeStart(e.touches[0])}
         ontouchend={(e) => swipeEnd(e.changedTouches[0])}
+        ontouchcancel={() => {
+          swipeFrom = null;
+          endTouch();
+        }}
         role="presentation"
       >
         <div class="pdf-row" bind:this={pdfRow}></div>
@@ -729,6 +753,8 @@
     justify-content: center;
     padding: 1rem;
     background: var(--bg-elev);
+    /* 세로 스크롤만 브라우저가 처리하고, 가로 드래그는 쪽 넘김에 넘긴다 (브라우저가 가로 드래그를 가져가면 쪽이 안 넘어간다) */
+    touch-action: pan-y;
   }
   .pdf-row {
     display: flex;
