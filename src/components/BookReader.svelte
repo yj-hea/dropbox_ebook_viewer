@@ -172,22 +172,20 @@
   let epubBytes: ArrayBuffer | null = null;
   let lastEpubCfi = '';
 
-  // 글자 크기 (기기에 기억). 버튼으로 한 단계씩 바꾼다.
-  const FONT_STEPS = [90, 100, 110, 120, 140, 160, 180];
+  // 글자 크기 (기기에 기억). 버튼으로 10%씩 바꾸며, 0 이하로 내려가 글자가 사라지는 것만 막는다.
   let fontPct = $state(readFont());
 
   function readFont(): number {
     try {
       const v = Number(localStorage.getItem('ebook.font'));
-      return FONT_STEPS.includes(v) ? v : 100;
+      return v > 0 ? v : 100;
     } catch {
       return 100;
     }
   }
 
-  function changeFont(step: number) {
-    const i = FONT_STEPS.indexOf(fontPct);
-    const next = FONT_STEPS[Math.min(Math.max(i + step, 0), FONT_STEPS.length - 1)];
+  function changeFont(delta: number) {
+    const next = Math.max(10, fontPct + delta);
     if (next === fontPct) return;
     fontPct = next;
     try {
@@ -572,8 +570,8 @@
       </button>
     {/if}
     {#if isEpub}
-      <button class="btn" onclick={() => changeFont(-1)} disabled={fontPct <= FONT_STEPS[0]} title="글자 작게" aria-label="글자 작게">A−</button>
-      <button class="btn" onclick={() => changeFont(1)} disabled={fontPct >= FONT_STEPS[FONT_STEPS.length - 1]} title="글자 크게" aria-label="글자 크게">A+</button>
+      <button class="btn" onclick={() => changeFont(-10)} title="글자 작게" aria-label="글자 작게">A−</button>
+      <button class="btn" onclick={() => changeFont(10)} title="글자 크게" aria-label="글자 크게">A+</button>
     {/if}
     <button class="btn" onclick={prev} title="이전 (←)" aria-label="이전"><i class="fa-solid fa-chevron-left"></i></button>
     {#if !isEpub}
