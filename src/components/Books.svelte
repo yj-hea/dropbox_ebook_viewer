@@ -120,6 +120,7 @@
 
   function setView(v: 'list' | 'shelf') {
     view = v;
+    if (v === 'shelf') void loadCovers(root, books);
     try {
       localStorage.setItem('books.view', v);
     } catch {
@@ -203,7 +204,9 @@
       books = lib.books;
       folders = lib.folders;
       await loadStates(r, books);
-      void loadCovers(r, books);
+      // 표지는 서재 보기에서만 만든다 (큰 책은 내려받는 데 오래 걸린다)
+      if (view === 'shelf') void loadCovers(r, books);
+      restoreOpenBook();
     } catch (e) {
       error = '책 목록을 불러오지 못했습니다: ' + (e instanceof Error ? e.message : String(e));
     } finally {
@@ -273,9 +276,30 @@
     return (history.state as { ebookView?: string } | null)?.ebookView;
   }
 
+  // 새로고침해도 읽던 책으로 돌아가도록 연 책의 경로를 기억한다
+  const OPEN_KEY = 'ebook.open';
+  let restored = false;
+
+  function restoreOpenBook() {
+    if (restored || current || notebook) return;
+    restored = true;
+    try {
+      const rel = localStorage.getItem(OPEN_KEY);
+      const book = books.find((b) => b.rel === rel);
+      if (book) open(book);
+    } catch {
+      /* ignore */
+    }
+  }
+
   function open(book: Book, at = '') {
     const st = getState(book.rel) ?? emptyState(book.rel, now());
     setState(root, startSession(st, now()));
+    try {
+      localStorage.setItem(OPEN_KEY, book.rel);
+    } catch {
+      /* ignore */
+    }
     // 노트 화면에서 넘어왔다면 그 항목을 책 항목으로 바꿔서 뒤로 가기가 한 번에 목록으로 돌아가게 한다
     if (viewState() === 'notebook') history.replaceState({ ebookView: 'reader' }, '');
     else if (viewState() !== 'reader') history.pushState({ ebookView: 'reader' }, '');
@@ -300,6 +324,11 @@
 
   // 책 기록을 정리하고 목록으로 돌아간다 (뒤로 가기로 들어온 경우에는 기록을 다시 줄이지 않는다)
   function finishReading() {
+    try {
+      localStorage.removeItem(OPEN_KEY);
+    } catch {
+      /* ignore */
+    }
     if (current) {
       const st = getState(current.rel);
       if (st) setState(root, endSession(st, now()));

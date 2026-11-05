@@ -277,9 +277,16 @@
     if (stage) pdfResizeObserver.observe(stage);
   }
 
+  // 진행 중인 쪽 그리기. 새로 그릴 때 취소해서 서로 겹치지 않게 한다.
+  let renderTasks: { cancel: () => void; promise: Promise<void> }[] = [];
+  // 모바일 브라우저가 감당하는 캔버스 픽셀 수 한계 (넘으면 쪽이 백지로 보인다)
+  const MAX_CANVAS_PIXELS = 12_000_000;
+
   async function renderPdf(n: number, pdfjs?: typeof import('pdfjs-dist')) {
     if (!pdfDoc || !pdfRow || !stage) return;
     const seq = ++renderSeq;
+    for (const t of renderTasks) t.cancel();
+    renderTasks = [];
     const lib = pdfjs ?? (await import('pdfjs-dist'));
     // 두 쪽 보기면 n과 n+1을 나란히 그린다 (마지막 쪽이면 한 쪽만)
     const nums = spread && n + 1 <= pageCount ? [n, n + 1] : [n];
@@ -303,8 +310,9 @@
       wrap.style.width = `${viewport.width}px`;
       wrap.style.height = `${viewport.height}px`;
       const canvas = document.createElement('canvas');
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
+      const scale = Math.min(dpr, Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)));
+      canvas.width = Math.floor(viewport.width * scale);
+      canvas.height = Math.floor(viewport.height * scale);
       canvas.style.width = `${viewport.width}px`;
       canvas.style.height = `${viewport.height}px`;
       const textDiv = document.createElement('div');
@@ -316,7 +324,15 @@
 
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('캔버스를 만들 수 없습니다.');
-      await page.render({ canvasContext: ctx, viewport, transform: [dpr, 0, 0, dpr, 0, 0] }).promise;
+      const task = page.render({ canvasContext: ctx, viewport, transform: [scale, 0, 0, scale, 0, 0] });
+      renderTasks.push(task);
+      try {
+        await task.promise;
+      } catch (err) {
+        // 더 새로운 그리기가 시작되어 취소된 것이면 조용히 끝낸다
+        if (seq !== renderSeq) return;
+        throw err;
+      }
       if (seq !== renderSeq) return;
 
       // 글자 층: 드래그로 고를 수 있게 캔버스 위에 올린다
