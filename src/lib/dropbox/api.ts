@@ -5,6 +5,32 @@
 
 import { getAccessToken } from './auth';
 
+// Dropbox 요청 동시 실행 수 제한과 429(요청 과다) 재시도.
+// 처음 열 때 책마다 기록 파일을 한꺼번에 받으면 429가 나므로 몇 개씩만 보낸다.
+const MAX_PARALLEL = 4;
+const MAX_RETRIES = 5;
+let running = 0;
+const waiting: (() => void)[] = [];
+
+async function withSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (running >= MAX_PARALLEL) await new Promise<void>((resolve) => waiting.push(resolve));
+  running++;
+  try {
+    return await task();
+  } finally {
+    running--;
+    waiting.shift()?.();
+  }
+}
+
+export async function dbxFetch(url: string, init?: RequestInit): Promise<Response> {
+  for (let tries = 0; ; tries++) {
+    const res = await withSlot(() => fetch(url, init));
+    if (res.status !== 429 || tries >= MAX_RETRIES) return res;
+    await new Promise((resolve) => setTimeout(resolve, 1000 * 2 ** tries));
+  }
+}
+
 const RPC_URL = 'https://api.dropboxapi.com/2';
 const CONTENT_URL = 'https://content.dropboxapi.com/2';
 
@@ -39,7 +65,7 @@ async function authHeader(): Promise<string> {
 }
 
 async function rpc<T>(endpoint: string, body: unknown): Promise<T> {
-  const res = await fetch(`${RPC_URL}${endpoint}`, {
+  const res = await dbxFetch(`${RPC_URL}${endpoint}`, {
     method: 'POST',
     headers: {
       Authorization: await authHeader(),
@@ -80,7 +106,7 @@ export async function listFolder(path: string, recursive = false): Promise<Entry
     const body = cursor
       ? { cursor }
       : { path: normalizePath(path), recursive, include_deleted: false };
-    const res = await fetch(`${RPC_URL}${endpoint}`, {
+    const res = await dbxFetch(`${RPC_URL}${endpoint}`, {
       method: 'POST',
       headers: { Authorization: auth, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -130,7 +156,7 @@ export interface DownloadResult {
 }
 
 export async function downloadFile(path: string): Promise<DownloadResult | null> {
-  const res = await fetch(`${CONTENT_URL}/files/download`, {
+  const res = await dbxFetch(`${CONTENT_URL}/files/download`, {
     method: 'POST',
     headers: {
       Authorization: await authHeader(),
@@ -159,7 +185,7 @@ export async function downloadFile(path: string): Promise<DownloadResult | null>
 
 /** 파일을 바이트 그대로 받는다 (EPUB·PDF 같은 바이너리용). 없으면 null. */
 export async function downloadBytes(path: string): Promise<ArrayBuffer | null> {
-  const res = await fetch(`${CONTENT_URL}/files/download`, {
+  const res = await dbxFetch(`${CONTENT_URL}/files/download`, {
     method: 'POST',
     headers: {
       Authorization: await authHeader(),
@@ -190,7 +216,7 @@ async function uploadRaw(path: string, body: BodyInit, mode: UploadMode): Promis
     autorename: mode === 'add',
     mute: true,
   };
-  const res = await fetch(`${CONTENT_URL}/files/upload`, {
+  const res = await dbxFetch(`${CONTENT_URL}/files/upload`, {
     method: 'POST',
     headers: {
       Authorization: await authHeader(),
@@ -225,7 +251,7 @@ export async function moveFile(from: string, to: string): Promise<void> {
 }
 
 export async function createFolder(path: string): Promise<void> {
-  const res = await fetch(`${RPC_URL}/files/create_folder_v2`, {
+  const res = await dbxFetch(`${RPC_URL}/files/create_folder_v2`, {
     method: 'POST',
     headers: { Authorization: await authHeader(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: normalizePath(path) }),
@@ -294,7 +320,7 @@ function toRawUrl(url: string): string {
 /** 파일의 공유 링크(raw=1) 반환. 이미 있으면 기존 링크 재사용. */
 export async function getRawSharedLink(path: string): Promise<string> {
   const p = normalizePath(path);
-  const res = await fetch(`${RPC_URL}/sharing/create_shared_link_with_settings`, {
+  const res = await dbxFetch(`${RPC_URL}/sharing/create_shared_link_with_settings`, {
     method: 'POST',
     headers: { Authorization: await authHeader(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p }),
